@@ -8,6 +8,7 @@ const sessions = ref<Session[]>([]);
 const error = ref("");
 
 const LANES_BY_CATEGORY: Record<RaceCategory, number> = { H2H: 2, RX: 4, DRR: 0, SPRINT: 0, SLALOM: 0 };
+const bucket = reactive({ divisionId: "", raceId: "", initialId: "" });
 const form = reactive({ eventId: "", raceCategory: "H2H" as RaceCategory, heatId: "", label: "", cameraId: "cam-1", lanes: [] as Lane[] });
 
 function resetLanes() {
@@ -30,6 +31,7 @@ async function create() {
   try {
     const s = await api<Session>("POST", "/api/sessions", {
       ...form, heatId: form.heatId || null, lanes: form.lanes.filter((l) => l.teamId),
+      bucket: bucket.divisionId && bucket.raceId && bucket.initialId ? { ...bucket } : null,
     });
     emit("open", s._id);
   } catch (e) {
@@ -51,6 +53,9 @@ onMounted(load);
           <option value="SPRINT">Sprint</option><option value="SLALOM">Slalom</option>
         </select>
       </label>
+      <label>Division ID <input v-model="bucket.divisionId" /></label>
+      <label>Race ID <input v-model="bucket.raceId" /></label>
+      <label>Initial ID <input v-model="bucket.initialId" /></label>
       <label>Heat <input v-model="form.heatId" placeholder="opsional" /></label>
       <label>Label <input v-model="form.label" required placeholder="mis. H2H R6 Putra — Heat 3" /></label>
       <label>Kamera <input v-model="form.cameraId" required style="width: 90px" /></label>
@@ -68,7 +73,10 @@ onMounted(load);
       </table>
       <button class="primary">Buat sesi</button>
     </form>
-    <p class="muted">DRR: tim dipilih saat menandai perahu, tidak perlu lintasan.</p>
+    <p class="muted">
+      Division/Race/Initial ID wajib agar hasil otomatis masuk ke kategori yang benar di sts-timingsystem.
+      DRR: tim dipilih saat menandai perahu, tidak perlu lintasan.
+    </p>
   </section>
 
   <section class="card">

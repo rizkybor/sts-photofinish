@@ -6,6 +6,7 @@ import { api } from "./api";
 export interface ClockStatus {
   serverNs: string;
   mode: "auto" | "manual";
+  source: "manual" | "racetime" | "host-local";
   revision: number;
   manualOffsetNs: string | null;
   trimNs: string;

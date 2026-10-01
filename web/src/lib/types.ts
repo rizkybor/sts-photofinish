@@ -6,13 +6,15 @@ export interface User { sub: string; name: string; role: Role }
 
 export interface Lane { lane: string; teamId: string; bib: string | null; teamName: string | null; crewExpected: number | null }
 
+export interface Bucket { divisionId: string; raceId: string; initialId: string }
+
 export interface Session {
-  _id: string; eventId: string; raceCategory: RaceCategory; heatId: string | null; label: string;
+  _id: string; eventId: string; bucket: Bucket | null; raceCategory: RaceCategory; heatId: string | null; label: string;
   lanes: Lane[]; cameraId: string; armed: boolean; status: "open" | "closed";
   calibrationOffsetNs: string; calibratedAt: string | null; createdAt: string;
 }
 
-export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; deviceTimeNs: string; deviceOffsetNs: string | null }
+export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; timeBasis: "device" | "pf-clock"; deviceTimeNs: string; deviceOffsetNs: string | null }
 
 export interface Group { _id: string; impulseIds: string[]; status: "collecting" | "extracting" | "ready"; warnings: string[]; createdAt: string }
 

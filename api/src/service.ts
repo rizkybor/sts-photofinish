@@ -9,7 +9,7 @@ import { findTies, pairByOrder } from "./pairing.js";
 import type { z } from "zod";
 import type { CalibrateBody, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
 import {
-  deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, nowEpochNs, officialClock, parseClock, toNs,
+  deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, NS_PER_SEC, nowEpochNs, officialClock, parseClock, toNs, wrapDay,
 } from "./time.js";
 
 /** Kanal keluar — diimplementasikan oleh realtime.ts (Socket.IO). */
@@ -66,13 +66,28 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     };
   }
 
+  /**
+   * Fallback saat belum ada acuan RaceTime2: jam lokal laptop (zona waktu
+   * host). Offset hanya bermakna modulo 1 hari, jadi cukup selisih zona waktu.
+   */
+  function hostLocalOffsetNs(): string {
+    return (BigInt(new Date().getTimezoneOffset()) * 60n * NS_PER_SEC).toString();
+  }
+
   /** `autoOffset` bisa diisi snapshot impuls agar satu kelompok konsisten. */
   async function effectiveClock(autoOffset?: string | null): Promise<ClockSnapshot> {
     const s = await clockSettings();
-    const base = s.mode === "manual" ? s.manualOffsetNs : (autoOffset ?? (await currentDeviceOffset()));
+    let base: string | null;
+    let source: ClockSnapshot["source"];
+    if (s.mode === "manual" && s.manualOffsetNs !== null) {
+      [base, source] = [s.manualOffsetNs, "manual"];
+    } else {
+      const auto = autoOffset ?? (await currentDeviceOffset());
+      [base, source] = auto !== null ? [auto, "racetime"] : [hostLocalOffsetNs(), "host-local"];
+    }
     return {
-      mode: s.mode, revision: s.revision, baseOffsetNs: base, trimNs: s.trimNs,
-      effectiveOffsetNs: base === null ? null : (toNs(base) - toNs(s.trimNs)).toString(),
+      mode: s.mode, source, revision: s.revision, baseOffsetNs: base, trimNs: s.trimNs,
+      effectiveOffsetNs: (toNs(base) - toNs(s.trimNs)).toString(),
     };
   }
 
@@ -94,6 +109,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     return {
       serverNs: serverNs.toString(),
       mode: settings.mode,
+      source: eff.source,
       revision: settings.revision,
       manualOffsetNs: settings.manualOffsetNs,
       trimNs: settings.trimNs,
@@ -165,6 +181,18 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
 
     const clock = await col.clock.findOne({ _id: "timing" });
     const armed = await col.sessions.findOne({ armed: true, status: "open" });
+
+    // Frame RaceTime2 tanpa payload waktu → waktu = jam PF saat kejadian.
+    let deviceTimeNs: bigint;
+    let pfClockRevision: number | null = null;
+    if (msg.deviceTime) {
+      deviceTimeNs = parseClock(msg.deviceTime);
+    } else {
+      const pf = await effectiveClock();
+      deviceTimeNs = wrapDay(toNs(msg.hostNs) - toNs(pf.effectiveOffsetNs!));
+      pfClockRevision = pf.revision;
+    }
+
     const doc: ImpulseDoc = {
       _id: new ObjectId(),
       sessionId: armed?._id ?? null,
@@ -172,10 +200,14 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       bootId: msg.bootId,
       seq: msg.seq,
       channel: msg.channel,
-      deviceTime: msg.deviceTime,
-      deviceTimeNs: parseClock(msg.deviceTime).toString(),
+      deviceTime: msg.deviceTime ?? formatClock(deviceTimeNs, 3),
+      deviceTimeNs: deviceTimeNs.toString(),
+      timeBasis: msg.deviceTime ? "device" : "pf-clock",
+      pfClockRevision,
+      serialLatencyNs: msg.serialLatencyNs ?? null,
       hostNs: msg.hostNs,
-      deviceOffsetNs: clock?.bootId === msg.bootId ? clock.deviceOffsetNs : null,
+      // Relasi RaceTime2↔host hanya terukur bila impuls membawa waktu perangkat.
+      deviceOffsetNs: msg.deviceTime && clock?.bootId === msg.bootId ? clock.deviceOffsetNs : null,
       receivedAt: new Date(),
     };
     try {
@@ -532,7 +564,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     if (!s || c.status !== "confirmed" || !c.teamId || !c.finishTime || !c.officialTime || !c.timeSource) return false;
     const unsigned: Omit<PhotofinishVerified, "sig"> = {
       type: "photofinish:verified",
-      crossingId: c._id.toHexString(), sessionId: s._id.toHexString(), eventId: s.eventId, raceCategory: s.raceCategory,
+      crossingId: c._id.toHexString(), sessionId: s._id.toHexString(), eventId: s.eventId, bucket: s.bucket, raceCategory: s.raceCategory,
       heatId: s.heatId, teamId: c.teamId, bib: c.bib, rank: c.rank, finishTime: c.finishTime, officialTime: c.officialTime,
       timeSource: c.timeSource,
       penalties: {

@@ -17,6 +17,12 @@ const s = computed(() => clock.status);
 const diffMs = computed(() => nsToMs(s.value?.diffVsRaceTimeNs));
 const trimMs = computed(() => nsToMs(s.value?.trimNs) ?? 0);
 const autoFresh = computed(() => !!s.value?.auto && s.value.auto.ageMs < 30_000);
+const SOURCE_SHORT = { manual: "manual", racetime: "RaceTime2", "host-local": "jam laptop" } as const;
+const SOURCE_LONG = {
+  manual: "Manual — dikunci admin",
+  racetime: "Otomatis — heartbeat RaceTime2",
+  "host-local": "Jam laptop (BELUM dikalibrasi ke RaceTime2)",
+} as const;
 const diffClass = computed(() => (diffMs.value === null ? "" : Math.abs(diffMs.value) <= 5 ? "ok" : "warn"));
 
 async function act(body: Record<string, unknown>) {
@@ -58,7 +64,7 @@ onUnmounted(() => {
   <div class="clock">
     <button class="clock-face" :title="can('admin') ? 'Pengaturan jam' : 'Jam Photo Finish'" @click="open = !open">
       <span class="mono">{{ now ?? "--:--:--.---" }}</span>
-      <span class="badge">{{ s?.mode === "manual" ? "manual" : "auto" }}</span>
+      <span class="badge" :class="{ warn: s?.source === 'host-local' }">{{ SOURCE_SHORT[s?.source ?? "host-local"] }}</span>
       <span v-if="diffMs !== null" class="badge" :class="diffClass">Δ {{ diffMs >= 0 ? "+" : "" }}{{ diffMs.toFixed(1) }} ms</span>
     </button>
 
@@ -70,7 +76,7 @@ onUnmounted(() => {
       </p>
       <table>
         <tbody>
-          <tr><th>Mode</th><td>{{ s?.mode === "manual" ? "Manual (dikunci admin)" : "Otomatis (heartbeat RaceTime2)" }} · rev {{ s?.revision ?? 0 }}</td></tr>
+          <tr><th>Sumber jam</th><td>{{ SOURCE_LONG[s?.source ?? "host-local"] }} · rev {{ s?.revision ?? 0 }}</td></tr>
           <tr>
             <th>Heartbeat RaceTime2</th>
             <td>

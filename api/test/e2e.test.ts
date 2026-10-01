@@ -291,3 +291,45 @@ test("jam Photo Finish: kalibrasi admin, snapshot per rekaman, bukti lama tidak 
   agent.socket.close();
   timing.close();
 });
+
+test("frame RaceTime2 tanpa payload: waktu impuls dari jam PF, bucket ikut ke timing", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const [op, juri, adm] = [await login("op"), await login("juri"), await login("adm")];
+  const timing = await socket(issueToken({ sub: "device:timing:3", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  const agent = await fakeAgent(issueToken({ sub: "device:agent:3", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"));
+  const verified: any[] = [];
+  timing.on("photofinish:verified", (msg: any, ack: (r: unknown) => void) => { verified.push(msg); ack({ ok: true }); });
+
+  // Admin menyamakan jam PF dengan tampilan RaceTime2 (set waktu + reset trim).
+  await http("POST", "/api/clock/settings", adm, { action: "reset-trim" });
+  const status = (await http("POST", "/api/clock/settings", adm, { action: "set-time", deviceTime: "09:00:00.000" })).data;
+  assert.equal(status.source, "manual");
+  const offset = BigInt(status.effectiveOffsetNs);
+
+  const bucket = { divisionId: "div-r6", raceId: "race-putra", initialId: "init-open" };
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "EVT-3", bucket, raceCategory: "RX", label: "RX heat 1", lanes: [{ lane: "1", teamId: "team-1", bib: "1" }] });
+  assert.deepEqual(session.bucket, bucket);
+  await http("POST", "/api/sessions/" + session._id + "/arm", op);
+
+  const hostNs = nowEpochNs();
+  const res = await timing.emitWithAck("timing:impulse", signPayload({
+    type: "timing:impulse", bootId: randomUUID(), seq: 0, channel: "FINISH", hostNs: hostNs.toString(), serialLatencyNs: "166666667",
+  }, SECRET));
+  assert.equal(res.ok, true, res.error);
+  const imp = (await database.col.impulses.findOne({ _id: new ObjectId(res.impulseId) }))!;
+  assert.equal(imp.timeBasis, "pf-clock");
+  assert.equal(imp.pfClockRevision, status.revision);
+  assert.equal(imp.deviceTimeNs, (((hostNs - offset) % NS_PER_DAY) + NS_PER_DAY) % NS_PER_DAY + "");
+  assert.equal(imp.deviceTime, formatClock(BigInt(imp.deviceTimeNs), 3));
+
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) })) === 1);
+  const capture = (await http("GET", "/api/sessions/" + session._id, op)).data.captures[0];
+  const { data: crossing } = await http("POST", "/api/crossings", op, { captureId: capture._id, column: 10, rank: 1, lane: "1" });
+  assert.equal(crossing.finishTime, imp.deviceTime);
+  await http("POST", "/api/crossings/" + crossing._id + "/confirm", juri, { teamId: "team-1", crewInBoat: 4, crewExpected: 4, upright: true });
+  await until(() => verified.length === 1);
+  assert.deepEqual(verified[0].bucket, bucket);
+  assert.equal(verified[0].raceCategory, "RX");
+  agent.socket.close();
+  timing.close();
+});

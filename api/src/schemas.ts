@@ -20,10 +20,16 @@ export const TimingImpulse = z.object({
   seq: z.number().int().nonnegative(),
   // Wajib (tanpa default): field yang ditambahkan parser akan merusak verifikasi HMAC.
   channel: z.enum(["FINISH", "START"]),
-  /** Waktu perangkat apa adanya dari RaceTime2, mis. "10:42:13.482". */
-  deviceTime: ClockString,
-  /** Jam epoch host timing saat frame selesai diterima (ns). */
+  /**
+   * Waktu perangkat dari RaceTime2, mis. "10:42:13.482". TIDAK dikirim bila
+   * frame "bare" (tanpa payload waktu — perilaku RaceTime2 di lapangan saat
+   * ini); API lalu memakai jam Photo Finish pada `hostNs`.
+   */
+  deviceTime: ClockString.optional(),
+  /** Jam epoch host timing saat kejadian (ns), sudah dikurangi `serialLatencyNs`. */
   hostNs: NsString,
+  /** Estimasi waktu transmisi frame serial yang sudah dikurangkan dari hostNs. */
+  serialLatencyNs: NsString.optional(),
   sig: Sig,
 });
 export type TimingImpulse = z.infer<typeof TimingImpulse>;
@@ -49,6 +55,7 @@ export interface PhotofinishVerified {
   crossingId: string;
   sessionId: string;
   eventId: string;
+  bucket: z.infer<typeof Bucket> | null;
   raceCategory: z.infer<typeof RaceCategory>;
   heatId: string | null;
   teamId: string;
@@ -95,8 +102,16 @@ export const Lane = z.object({
   crewExpected: z.number().int().min(1).max(12).nullable().default(null),
 });
 
+/** Kategori di sts-timingsystem — hasil hanya diterapkan ke bucket yang sama persis. */
+export const Bucket = z.object({
+  divisionId: z.string().min(1).max(64),
+  raceId: z.string().min(1).max(64),
+  initialId: z.string().min(1).max(64),
+});
+
 export const SessionCreate = z.object({
   eventId: z.string().min(1).max(64),
+  bucket: Bucket.nullable().default(null),
   raceCategory: RaceCategory,
   heatId: z.string().max(64).nullable().default(null),
   label: z.string().min(1).max(128),

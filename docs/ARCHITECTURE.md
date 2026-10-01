@@ -130,6 +130,15 @@ berasal dari situ. Hasil photo finish harus dikonversi kembali ke basis ini.
 deviceTime(frame) = frameHostNs + agentOffsetNs − deviceOffsetNs + calibrationOffsetNs
 ```
 
+### Frame RaceTime2 tanpa waktu (kondisi lapangan saat ini)
+
+RaceTime2 yang dipakai mengirim frame *bare* tanpa payload waktu, sehingga
+langkah 1 (heartbeat) belum bisa berjalan. Impuls lalu dicap dengan **jam
+Photo Finish** saat frame diterima, dikurangi waktu transmisi serial
+(`timeBasis: "pf-clock"`). Ketepatan terhadap RaceTime2 datang dari
+kalibrasi admin di bawah. Kalau belum dikalibrasi, jam PF = jam lokal laptop
+(`source: "host-local"`, ditandai di UI).
+
 ### Jam Photo Finish & kalibrasi manual oleh admin
 
 Photo Finish punya **jam berjalan sendiri** (basis RaceTime2) yang tampil di

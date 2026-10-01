@@ -26,6 +26,8 @@ export interface LaneDoc {
 export interface SessionDoc {
   _id: ObjectId;
   eventId: string;
+  /** Division/Race/Initial di sts-timingsystem; null = belum ditautkan. */
+  bucket: { divisionId: string; raceId: string; initialId: string } | null;
   raceCategory: "H2H" | "RX" | "DRR" | "SPRINT" | "SLALOM";
   heatId: string | null;
   label: string;
@@ -48,6 +50,11 @@ export interface ImpulseDoc {
   channel: "FINISH" | "START";
   deviceTime: string;
   deviceTimeNs: string;
+  /** "device" = waktu dari payload RaceTime2; "pf-clock" = frame bare, waktu dari jam PF saat diterima. */
+  timeBasis: "device" | "pf-clock";
+  /** Revisi jam PF yang dipakai bila timeBasis "pf-clock". */
+  pfClockRevision: number | null;
+  serialLatencyNs: string | null;
   hostNs: string;
   /** Snapshot offset jam perangkat saat impuls diterima (null = belum sinkron). */
   deviceOffsetNs: string | null;
@@ -70,6 +77,8 @@ export interface GroupDoc {
 
 export interface ClockSnapshot {
   mode: "auto" | "manual";
+  /** Asal base offset: dikunci admin, heartbeat RaceTime2, atau jam lokal laptop (fallback). */
+  source: "manual" | "racetime" | "host-local";
   revision: number;
   baseOffsetNs: string | null;
   trimNs: string;

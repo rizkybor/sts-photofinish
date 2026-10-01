@@ -94,6 +94,7 @@ onUnmounted(() => {
         Event <span class="mono">{{ session.eventId }}</span> · Kamera {{ session.cameraId }} ·
         Kalibrasi kamera (vs photocell): {{ session.calibratedAt ? `${(Number(session.calibrationOffsetNs) / 1e6).toFixed(1)} ms (${new Date(session.calibratedAt).toLocaleTimeString("id-ID")})` : "belum" }}
       </p>
+      <p v-if="!session.bucket" class="warn-box">Sesi belum ditautkan ke Division/Race/Initial — hasil tidak akan diterapkan otomatis di sts-timingsystem.</p>
       <p v-if="usesLanes" class="muted">
         Lintasan: <span v-for="l in session.lanes" :key="l.lane" style="margin-right: 12px">{{ l.lane }} = {{ l.teamName ?? l.teamId }}{{ l.bib ? ` #${l.bib}` : "" }}</span>
       </p>
@@ -108,7 +109,9 @@ onUnmounted(() => {
       </div>
       <p class="muted">
         Impuls RaceTime2:
-        <span v-for="(i, n) in impulsesOf(g)" :key="i._id" class="mono" style="margin-right: 10px">{{ n + 1 }}) {{ i.deviceTime }}</span>
+        <span v-for="(i, n) in impulsesOf(g)" :key="i._id" class="mono" style="margin-right: 10px" :title="i.timeBasis === 'pf-clock' ? 'Frame RaceTime2 tanpa waktu — dicap jam Photo Finish' : 'Waktu dari RaceTime2'">
+          {{ n + 1 }}) {{ i.deviceTime }}{{ i.timeBasis === "pf-clock" ? " ⏱" : "" }}
+        </span>
       </p>
       <div v-for="w in g.warnings" :key="w" class="warn-box">{{ w }}</div>
 
