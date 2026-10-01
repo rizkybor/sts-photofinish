@@ -14,11 +14,11 @@ export interface Session {
   calibrationOffsetNs: string; calibratedAt: string | null; createdAt: string;
 }
 
-export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; timeBasis: "device" | "pf-clock"; deviceTimeNs: string; deviceOffsetNs: string | null }
+export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; timeBasis: "device" | "pf-clock"; source?: "racetime" | "camera"; deviceTimeNs: string; deviceOffsetNs: string | null }
 
 export interface Group { _id: string; impulseIds: string[]; status: "collecting" | "extracting" | "ready"; warnings: string[]; createdAt: string }
 
-export interface Capture { _id: string; groupId: string; cameraId: string; url: string; columnsUrl: string; width: number; height: number; fps: number; sha256: string }
+export interface Capture { _id: string; groupId: string; cameraId: string; url: string; columnsUrl: string; width: number; height: number; fps: number; sha256: string; frameCount?: number }
 
 export interface Crossing {
   _id: string; groupId: string; captureId: string; column: number; rank: number; lane: string | null; teamId: string | null; bib: string | null;

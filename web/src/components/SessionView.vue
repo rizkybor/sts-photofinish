@@ -51,7 +51,7 @@ async function closeSession() {
 
 const socket = getSocket();
 const join = () => socket.emit("session:join", props.sessionId);
-const EVENTS = ["impulse:new", "group:updated", "capture:ready", "crossing:updated", "session:armed"];
+const EVENTS = ["impulse:new", "group:updated", "group:deleted", "capture:ready", "crossing:updated", "session:armed"];
 onMounted(() => {
   load();
   join();
@@ -101,7 +101,8 @@ onUnmounted(() => {
     <section v-if="session.lanes.length" class="card" style="padding: 14px 20px">
       <div class="row">
         <span class="section-label" style="margin: 0">Lintasan</span>
-        <span v-for="l in session.lanes" :key="l.lane" class="lane"><span class="lane-id">{{ l.lane }}</span>{{ l.teamName ?? l.teamId }}<span v-if="l.bib" class="hint">#{{ l.bib }}</span></span>
+        <span v-for="l in session.lanes.slice(0, 8)" :key="l.lane" class="lane"><span class="lane-id">{{ l.lane }}</span>{{ l.teamName ?? l.teamId }}<span v-if="l.bib" class="hint">#{{ l.bib }}</span></span>
+        <span v-if="session.lanes.length > 8" class="hint">+{{ session.lanes.length - 8 }} tim lain</span>
         <span class="spacer" />
         <span v-if="session.bucket" class="hint mono">{{ session.bucket.divisionId }} · {{ session.bucket.raceId }} · {{ session.bucket.initialId }}</span>
       </div>

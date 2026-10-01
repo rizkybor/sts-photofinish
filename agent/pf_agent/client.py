@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
+import uuid
 from dataclasses import asdict
 
 import httpx
@@ -42,12 +44,16 @@ class LatestFrame:
 
 
 class AgentClient:
-    def __init__(self, cfg: AgentConfig, ring: LineRing, latest: LatestFrame | None = None, camera=None) -> None:
+    def __init__(self, cfg: AgentConfig, ring: LineRing, latest: LatestFrame | None = None, camera=None, archive=None) -> None:
         self.cfg = cfg
         self.ring = ring
         self.latest = latest
         self.camera = camera
+        self.archive = archive
         self._preview_on = threading.Event()
+        self._triggers: queue.Queue[int] = queue.Queue(maxsize=100)
+        self._boot = str(uuid.uuid4())
+        self._trigger_seq = 0
         self.clock = OffsetEstimator()
         self.sio = socketio.Client(reconnection=True, reconnection_delay_max=5)
         self.http = httpx.Client(base_url=cfg.api_url, headers={"authorization": f"Bearer {cfg.device_token}"}, timeout=10)
@@ -56,15 +62,25 @@ class AgentClient:
         self.sio.on("disconnect", lambda *_: log.warning("Terputus dari API — mencoba lagi"))
         self.sio.on("agent:extract", self._on_extract)
         self.sio.on("agent:preview", self._on_preview)
+        self.sio.on("agent:rejected", self._on_rejected)
+        self.rejected: str | None = None
 
     def run(self) -> None:
-        self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token}, transports=["websocket"], wait_timeout=10)
+        self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token, "cameraId": self.cfg.camera_id}, transports=["websocket"], wait_timeout=10)
         threading.Thread(target=self._sync_loop, name="clock-sync", daemon=True).start()
         threading.Thread(target=self._preview_loop, name="preview", daemon=True).start()
+        threading.Thread(target=self._trigger_loop, name="trigger", daemon=True).start()
         try:
             self.sio.wait()
         finally:
             self._stop.set()
+        if self.rejected:
+            raise SystemExit(f"Agent ditolak API: {self.rejected}")
+
+    def _on_rejected(self, data: dict) -> None:
+        self.rejected = str((data or {}).get("error") or "ditolak")
+        log.error(self.rejected)
+        self.sio.disconnect()  # putus manual = tidak mencoba reconnect
 
     # ------------------------------------------------------------ sinkron jam
 
@@ -87,6 +103,38 @@ class AgentClient:
                     best = self.clock.best()
                     log.debug("offset=%.3f ms rtt=%.3f ms", best.offset_ns / 1e6, best.rtt_ns / 1e6)
             self._stop.wait(SYNC_INTERVAL_S)
+
+    # ------------------------------------------------------------ photocell virtual
+
+    def report_trigger(self, ts_ns: int) -> None:
+        """Dipanggil dari thread kamera — jangan blok; antre lalu kirim di thread lain."""
+        try:
+            self._triggers.put_nowait(ts_ns)
+        except queue.Full:
+            log.warning("Antrean pemicu penuh — pemicu dibuang")
+
+    def _trigger_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                ts = self._triggers.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if not self.sio.connected or not self.clock.ready:
+                log.warning("Pemicu kamera diabaikan — belum terhubung/tersinkron dengan API")
+                continue
+            best = self.clock.best()
+            self._trigger_seq += 1
+            try:
+                res = self.sio.call("agent:trigger", {
+                    "cameraId": self.cfg.camera_id, "bootId": self._boot, "seq": self._trigger_seq,
+                    "agentNs": str(ts), "agentOffsetNs": str(best.offset_ns),
+                }, timeout=5)
+                if res and res.get("ok"):
+                    log.info("Pemicu kamera #%d terkirim%s", self._trigger_seq, "" if res.get("accepted") else " (tidak ada sesi aktif — diabaikan)")
+                else:
+                    log.warning("Pemicu kamera ditolak: %s", res)
+            except Exception as err:  # noqa: BLE001
+                log.warning("Pemicu kamera gagal terkirim: %s", err)
 
     # ------------------------------------------------------------ cuplikan standby
 
@@ -144,12 +192,17 @@ class AgentClient:
             if oldest is not None and oldest > from_ns:
                 log.warning("Buffer tidak mencakup awal jendela (kurang %.0f ms) — naikkan PF_BUFFER_SECONDS", (oldest - from_ns) / 1e6)
 
+            frames = None
+            if self.archive is not None:
+                self.archive.flush()
+                frames = self.archive.window(from_ns, to_ns)
             result = extract(
                 self.ring, from_ns, to_ns, self.cfg.captures_dir, req["sessionId"], req["groupId"], self.cfg.camera_id,
                 clock=ClockSnapshot.from_request(req.get("clock")), agent_offset_ns=best.offset_ns,
+                frames=frames, frame_scale=self.archive.scale if self.archive else 1.0, finish_line=self.cfg.finish_line,
             )
             self._post_capture(req["groupId"], result, best.offset_ns, best.rtt_ns)
-            log.info("Capture %s terkirim (%d kolom, %.0f fps)", req["groupId"], result.width, result.fps)
+            log.info("Capture %s terkirim (%d kolom, %.0f fps, %d frame utuh)", req["groupId"], result.width, result.fps, result.frame_count)
         except Exception:  # noqa: BLE001
             log.exception("Ekstraksi kelompok %s gagal", req.get("groupId"))
 
@@ -170,6 +223,8 @@ class AgentClient:
             "agentOffsetNs": str(offset_ns),
             "agentRttNs": str(rtt_ns),
         }
+        if d["frames_file"]:
+            body.update({"framesFile": d["frames_file"], "framesSha256": d["frames_sha256"], "frameCount": d["frame_count"]})
         res = self.http.post("/api/captures", json=body)
         if res.status_code >= 400:
             raise RuntimeError(f"API menolak capture: {res.status_code} {res.text}")

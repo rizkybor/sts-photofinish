@@ -52,3 +52,18 @@ export async function openFile(full: string) {
   const st = await stat(full);
   return { size: st.size, stream: createReadStream(full) };
 }
+
+export interface FramesIndex {
+  cameraId: string;
+  scale: number;
+  finishLine: { x1: number; y1: number; x2: number; y2: number } | null;
+  frames: Array<{ file: string; agentNs: string; sha256: string }>;
+}
+
+export async function readFramesIndex(full: string): Promise<FramesIndex> {
+  const d = JSON.parse(await readFile(full, "utf8")) as FramesIndex;
+  if (!Array.isArray(d.frames) || !d.frames.every((f) => typeof f.file === "string" && /^-?\d+$/.test(f.agentNs) && /^[0-9a-f]{64}$/.test(f.sha256))) {
+    throw new Error("Indeks frame tidak valid");
+  }
+  return d;
+}

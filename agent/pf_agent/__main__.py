@@ -11,6 +11,8 @@ from .client import AgentClient, LatestFrame
 from .config import AgentConfig
 from .extract import preview_with_line
 from .ringbuffer import LineRing
+from .frames import FrameArchive
+from .trigger import LineTrigger
 
 
 def main() -> None:
@@ -39,14 +41,28 @@ def main() -> None:
     logging.info("Kamera %s %dx%d, buffer %d frame (%.0f dtk @ %.0f fps)", cfg.camera_id, width, height, capacity, cfg.buffer_seconds, cfg.camera_fps)
 
     latest = LatestFrame()
+    archive = FrameArchive(cfg.frames, cfg.camera_fps) if cfg.frames else None
+    if archive:
+        logging.info("Arsip frame utuh AKTIF (%.0f fps, lebar %d px)", archive.fps, cfg.frames.width)
+    client = AgentClient(cfg, ring, latest=latest, camera=camera, archive=archive)
+    trigger = LineTrigger(cfg.trigger) if cfg.trigger else None
+    if trigger:
+        logging.info("Photocell virtual AKTIF (ambang %.0f, rangkaian min %.0f%% garis)", cfg.trigger.threshold, cfg.trigger.min_run * 100)
 
     def on_frame(ts: int, frame) -> None:
-        ring.push(ts, slitscan.sample_line(frame, coords))
+        line = slitscan.sample_line(frame, coords)
+        ring.push(ts, line)
         latest.set(ts, frame)  # hanya referensi — untuk cuplikan standby
+        if archive is not None:
+            archive.push(ts, frame)
+        if trigger is not None:
+            fired = trigger.update(ts, line)
+            if fired is not None:
+                client.report_trigger(fired)
 
     camera.start(on_frame)
     try:
-        AgentClient(cfg, ring, latest=latest, camera=camera).run()
+        client.run()
     finally:
         camera.stop()
 

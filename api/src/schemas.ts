@@ -47,6 +47,33 @@ export const TimingClock = z.object({
 });
 export type TimingClock = z.infer<typeof TimingClock>;
 
+/**
+ * Tombol "Kirim heat ke Photo Finish" di sts-timingsystem: buat (atau pakai
+ * ulang) sesi untuk heat tersebut lalu langsung aktifkan. HMAC diverifikasi
+ * pada objek MENTAH sebelum parse (default Zod tidak boleh mengubah payload).
+ */
+export const TimingSessionRequest = z.object({
+  type: z.literal("timing:session"),
+  eventId: z.string().min(1).max(64),
+  bucket: z.object({
+    divisionId: z.string().min(1).max(64),
+    raceId: z.string().min(1).max(64),
+    initialId: z.string().min(1).max(64),
+  }),
+  raceCategory: RaceCategory,
+  heatId: z.string().max(64).nullable(),
+  label: z.string().min(1).max(128),
+  lanes: z.array(z.object({
+    lane: z.string().min(1).max(16),
+    teamId: z.string().min(1).max(64),
+    bib: z.string().max(16).nullable(),
+    teamName: z.string().max(128).nullable(),
+    crewExpected: z.number().int().min(1).max(12).nullable(),
+  })).max(64),
+  cameraId: z.string().min(1).max(64).optional(),
+  sig: Sig,
+});
+
 // ---------- API → sts-timingsystem (ditandatangani HMAC) ----------
 
 /** Diterima timing system → panggil updateTime(finishTime, index, 'finish'). */
@@ -72,6 +99,26 @@ export interface PhotofinishVerified {
   sig: string;
 }
 
+/**
+ * Setiap pemicu photocell virtual (perahu lewat garis di kamera) → baris
+ * "Photo Finish" di panel waktu timing system + Buffer-Timer-Finish.
+ * Notifikasi langsung (tanpa antrean): bila timing sedang terputus, baris
+ * ini tidak muncul, tetapi hasil juri (photofinish:verified) tetap terkirim.
+ */
+export interface PhotofinishTrigger {
+  type: "photofinish:trigger";
+  impulseId: string;
+  sessionId: string;
+  eventId: string;
+  bucket: { divisionId: string; raceId: string; initialId: string } | null;
+  raceCategory: z.infer<typeof RaceCategory>;
+  heatId: string | null;
+  cameraId: string;
+  /** Waktu terekam, format sama dengan digitTimeFinish (HH:MM:SS.mmm). */
+  time: string;
+  sig: string;
+}
+
 // ---------- Capture Agent → API ----------
 
 export const CaptureCreate = z.object({
@@ -90,6 +137,21 @@ export const CaptureCreate = z.object({
   /** Jam API − jam agent saat capture dibuat. */
   agentOffsetNs: NsString,
   agentRttNs: NsString,
+  /** Indeks frame utuh (opsional — arsip frame bisa dimatikan di agent). */
+  framesFile: z.string().min(1).max(512).optional(),
+  framesSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  frameCount: z.number().int().nonnegative().max(10_000).optional(),
+});
+
+/** Photocell virtual: agent melihat benda menyentuh garis finish di gambar kamera. */
+export const AgentTrigger = z.object({
+  cameraId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  bootId: z.string().uuid(),
+  seq: z.number().int().nonnegative(),
+  /** Timestamp frame pertama yang aktif (jam agent, ns). */
+  agentNs: NsString,
+  /** Jam API − jam agent saat pemicu dikirim. */
+  agentOffsetNs: NsString,
 });
 
 // ---------- Web App → API ----------

@@ -41,13 +41,26 @@ const LEVEL = {
   bad: { text: "Miring", cls: "status-danger", note: "Atur ulang dudukan kamera sebelum lomba dimulai." },
 } as const;
 
-function onFrame(f: PreviewFrame) {
-  if (f.cameraId !== cameraId.value) return;
+let decoding = false;
+async function onFrame(f: PreviewFrame) {
+  if (f.cameraId !== cameraId.value || decoding) return; // lewati frame bila yang sebelumnya belum siap
+  decoding = true;
   const url = URL.createObjectURL(new Blob([f.jpeg], { type: "image/jpeg" }));
-  if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
-  imgUrl.value = url;
-  const { jpeg: _j, ...meta } = f;
-  frame.value = { ...meta, receivedAt: Date.now() };
+  try {
+    // Decode dulu baru tukar — tidak ada jeda kosong antar-frame (anti kedip).
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const old = imgUrl.value;
+    imgUrl.value = url;
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 1000);
+    const { jpeg: _j, ...meta } = f;
+    frame.value = { ...meta, receivedAt: Date.now() };
+  } catch {
+    URL.revokeObjectURL(url);
+  } finally {
+    decoding = false;
+  }
 }
 
 async function subscribe() {

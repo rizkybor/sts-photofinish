@@ -5,6 +5,7 @@ import { api, can } from "../lib/api";
 import { GROUP_STATUS, TIME_SOURCE } from "../lib/labels";
 import type { Capture, Crossing, Group, Impulse, Session } from "../lib/types";
 import { attempt, confirmDialog, toast } from "../lib/ui";
+import FrameViewer from "./FrameViewer.vue";
 import SlitScanViewer from "./SlitScanViewer.vue";
 import AppIcon from "./ui/AppIcon.vue";
 
@@ -16,9 +17,18 @@ const lane = ref("");
 const teamId = ref("");
 const zoom = ref<number | null>(null); // null = pas selebar panel
 const scale = ref(1);
+const smooth = ref(true);
+const focusColumn = ref<number | null>(null); // kolom yang fotonya ditampilkan
+const pfTimes = ref<string[] | null>(null);
+const frameViewer = ref<InstanceType<typeof FrameViewer> | null>(null);
+function onHover(info: { column: number; label: string } | null) {
+  hover.value = info;
+  if (info) focusColumn.value = info.column; // tetap di posisi terakhir saat kursor keluar
+}
 const hover = ref<{ column: number; label: string } | null>(null);
 
 const usesLanes = computed(() => props.session.lanes.length > 0);
+const rtImpulses = computed(() => props.impulses.filter((i) => i.source !== "camera"));
 const nextRank = computed(() => props.crossings.reduce((m, c) => Math.max(m, c.rank), 0) + 1);
 const usedLanes = computed(() => new Set(props.crossings.map((c) => c.lane)));
 const editable = computed(() => props.session.status === "open" && can("operator"));
@@ -27,7 +37,8 @@ const st = computed(() => GROUP_STATUS[props.group.status]);
 async function onMark(column: number) {
   if (!props.capture) return;
   if (mode.value === "calibrate") {
-    const first = props.impulses[0];
+    // Kalibrasi butuh impuls photocell RaceTime2 sungguhan, bukan pemicu kamera.
+    const first = rtImpulses.value[0];
     if (!first) return;
     const res = await attempt(() => api<{ calibrationOffsetMs: number }>("POST", `/api/sessions/${props.session._id}/calibrate`, {
       captureId: props.capture!._id, column, impulseId: first._id,
@@ -50,6 +61,29 @@ async function onMark(column: number) {
   }
 }
 
+const hasConfirmed = computed(() => props.crossings.some((c) => c.revision > 0));
+const deleting = ref(false);
+
+async function removeGroup() {
+  const rt = rtImpulses.value.length;
+  const ok = await confirmDialog({
+    title: `Hapus kelompok finish #${props.index}?`,
+    danger: true,
+    okText: "Hapus tangkapan",
+    text:
+      "Gambar rekaman dan tanda urutan di kelompok ini dihapus permanen." +
+      (rt ? ` ${rt} impuls RaceTime2 tidak hilang — dikembalikan ke daftar "tanpa sesi".` : "") +
+      " Tindakan ini tercatat di audit log.",
+  });
+  if (!ok) return;
+  deleting.value = true;
+  try {
+    if (await attempt(() => api("DELETE", `/api/groups/${props.group._id}`), `Kelompok finish #${props.index} dihapus`)) emit("changed");
+  } finally {
+    deleting.value = false;
+  }
+}
+
 async function remove(c: Crossing) {
   if (!(await confirmDialog({ title: "Hapus tanda?", text: `Tanda urutan ${c.rank}${c.lane ? ` (lintasan ${c.lane})` : ""} akan dihapus. Urutan lain dihitung ulang.`, okText: "Hapus", danger: true }))) return;
   if (await attempt(() => api("DELETE", `/api/crossings/${c._id}`), "Tanda dihapus")) emit("changed");
@@ -63,12 +97,23 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
     <div class="card-head">
       <h3 class="card-title"><AppIcon name="finish" /> Kelompok finish #{{ index }} <span class="hint" style="font-weight: 600">· {{ fmt(group.createdAt) }}</span></h3>
       <span class="status-pill" :class="st.cls"><span class="dot" />{{ st.label }}</span>
+      <button
+        v-if="editable" class="btn btn-sm btn-danger" :disabled="hasConfirmed || deleting"
+        :title="hasConfirmed ? 'Ada hasil yang sudah dikonfirmasi juri — tidak bisa dihapus' : 'Hapus tangkapan ini'"
+        @click="removeGroup"
+      >
+        <AppIcon name="del" /> Hapus
+      </button>
     </div>
 
     <div class="impulses">
-      <span class="section-label" style="margin: 0">Impuls RaceTime2</span>
-      <span v-for="(i, n) in impulses" :key="i._id" class="chip mono" :title="i.timeBasis === 'pf-clock' ? 'Frame tanpa waktu — dicap jam Photo Finish' : 'Waktu dari RaceTime2'">
-        <strong>{{ n + 1 }}</strong> {{ i.deviceTime }}<AppIcon v-if="i.timeBasis === 'pf-clock'" name="timer" />
+      <span class="section-label" style="margin: 0">Pemicu</span>
+      <span
+        v-for="(i, n) in impulses" :key="i._id" class="chip mono" :class="{ 'chip-cam': i.source === 'camera' }"
+        :title="i.source === 'camera' ? 'Photocell virtual (kamera) — hanya memicu rekaman, waktu perahu dari gambar' : i.timeBasis === 'pf-clock' ? 'RaceTime2 (frame tanpa waktu — dicap jam Photo Finish)' : 'Waktu dari RaceTime2'"
+      >
+        <AppIcon :name="i.source === 'camera' ? 'camera' : 'sensors'" />
+        <strong>{{ n + 1 }}</strong> {{ i.deviceTime }}
       </span>
     </div>
     <div v-for="w in group.warnings" :key="w" class="alert alert-warn"><AppIcon name="warning" />{{ w }}</div>
@@ -78,11 +123,17 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
         <template v-if="editable">
           <div class="btn-group">
             <button class="btn btn-sm" :class="{ 'is-active': mode === 'mark' }" @click="mode = 'mark'"><AppIcon name="touch" /> Tandai urutan</button>
-            <button class="btn btn-sm" :class="{ 'is-active': mode === 'calibrate' }" :disabled="!impulses.length" @click="mode = 'calibrate'"><AppIcon name="target" /> Kalibrasi kamera</button>
+            <button class="btn btn-sm" :class="{ 'is-active': mode === 'calibrate' }" :disabled="!rtImpulses.length" :title="rtImpulses.length ? '' : 'Butuh impuls RaceTime2'" @click="mode = 'calibrate'"><AppIcon name="target" /> Kalibrasi kamera</button>
           </div>
           <template v-if="mode === 'mark'">
             <span>Urutan <strong class="readout">{{ nextRank }}</strong></span>
-            <div v-if="usesLanes" class="btn-group" aria-label="Lintasan">
+            <select v-if="usesLanes && session.lanes.length > 6" v-model="lane" class="input input-sm" aria-label="Tim" style="width: 220px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2)">
+              <option value="" style="color: #000">— pilih tim —</option>
+              <option v-for="l in session.lanes" :key="l.lane" :value="l.lane" style="color: #000">
+                {{ usedLanes.has(l.lane) ? "✓ " : "" }}#{{ l.bib ?? l.lane }} · {{ l.teamName ?? l.teamId }}
+              </option>
+            </select>
+            <div v-else-if="usesLanes" class="btn-group" aria-label="Lintasan">
               <button
                 v-for="l in session.lanes" :key="l.lane" class="btn btn-sm" :class="{ 'is-active': lane === l.lane }"
                 :title="l.teamName ?? l.teamId" @click="lane = lane === l.lane ? '' : l.lane"
@@ -96,6 +147,9 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
         </template>
         <span class="spacer" />
         <span class="readout">{{ hover ? `kolom ${hover.column} · ${hover.label}` : `${capture.fps} fps · ${(1000 / capture.fps).toFixed(1)} ms/kolom` }}</span>
+        <button class="btn btn-sm" :class="{ 'is-active': smooth }" :title="smooth ? 'Tampilan halus — klik untuk piksel tajam per kolom' : 'Piksel tajam — klik untuk tampilan halus'" @click="smooth = !smooth">
+          {{ smooth ? "Halus" : "Piksel" }}
+        </button>
         <button class="btn btn-sm" :class="{ 'is-active': zoom === null }" title="Pas selebar panel" @click="zoom = null">Pas</button>
         <label class="row" style="gap: 6px">
           <AppIcon name="zoom" />
@@ -103,12 +157,17 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
           <span class="mono" style="width: 44px">{{ scale.toFixed(1) }}×</span>
         </label>
       </div>
-      <SlitScanViewer
-        :capture="capture" :crossings="crossings" :can-mark="editable" :zoom="zoom"
-        :mark-color="mode === 'calibrate' ? '#fbbf24' : undefined" @mark="onMark" @hover="hover = $event" @scale="scale = $event"
-      />
+      <div class="review" @mouseenter="frameViewer?.setActive(true)" @mouseleave="frameViewer?.setActive(false)">
+        <SlitScanViewer
+          :capture="capture" :crossings="crossings" :impulses="impulses" :can-mark="editable" :zoom="zoom" :smooth="smooth"
+          :focus-column="capture.frameCount ? focusColumn : null"
+          :mark-color="mode === 'calibrate' ? '#fbbf24' : undefined" @mark="onMark" @hover="onHover" @scale="scale = $event" @times="pfTimes = $event"
+        />
+        <FrameViewer ref="frameViewer" :capture="capture" :column="focusColumn" :pf-times="pfTimes" @focus="focusColumn = $event" />
+      </div>
       <p v-if="editable && mode === 'mark'" class="hint" style="margin: 10px 0 0">
         {{ usesLanes ? "Pilih lintasan, lalu klik" : "Isi Team ID, lalu klik" }} ujung haluan perahu sesuai urutan tiba (kiri = lebih dulu).
+        Garis putus-putus = saat pemicu (kuning RaceTime2, biru kamera).
       </p>
     </div>
     <div v-else class="race-window empty" style="margin-top: 12px; color: #b6c2cf"><AppIcon name="camera" />Menunggu rekaman dari Capture Agent…</div>
@@ -152,5 +211,8 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
 
 <style scoped>
 .impulses { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 400px); gap: 12px; align-items: start; }
+@media (max-width: 1100px) { .review { grid-template-columns: 1fr; } }
+.chip-cam { background: #ecfeff; color: #0e7490; }
 .rank { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--brand); color: #fff; font-weight: 800; }
 </style>

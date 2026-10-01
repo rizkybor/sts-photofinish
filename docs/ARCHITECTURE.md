@@ -186,6 +186,39 @@ Ada dua kalibrasi yang berbeda:
 Semua nilai disimpan sebagai **string bilangan bulat ns** (BigInt di JS)
 agar tidak kehilangan presisi di JSON.
 
+## 5b. Photocell virtual (pemicu dari kamera)
+
+Untuk finish berdempetan, operator tidak mungkin mengklik/menekan tombol satu
+per satu. Dengan `PF_TRIGGER=camera`, agent memantau garis finish di gambar:
+latar (air) dimodelkan per piksel, dan pemicu terjadi bila **rangkaian piksel
+berubah warna terpanjang** ≥ `PF_TRIGGER_MIN_RUN` dari panjang garis selama 2
+frame. Perahu adalah blok utuh, sedangkan riak dan percikan tersebar, sehingga
+riak tidak memicu.
+
+- Pemicu dikirim sebagai `agent:trigger` lalu disimpan sebagai impuls `source:
+  "camera"` dan masuk ke kelompok finish. Rekaman mencakup semua perahu yang
+  berdempetan dalam **satu gambar**.
+- Pemicu kamera **bukan waktu resmi**. Pemasangan urutan↔waktu hanya memakai
+  impuls RaceTime2. Tanpa impuls RaceTime2, waktu tiap perahu = kolom gambar
+  saat haluannya menyentuh garis (`timeSource: "camera"`), sehingga perahu yang
+  selisih 1 frame tetap terpisah.
+- Hanya diterima bila ada sesi **AKTIF** dengan `cameraId` yang sama.
+
+## 5c. Foto frame (tinjauan frame demi frame)
+
+Slit-scan memakai sumbu horizontal sebagai **waktu**, sehingga benda tampak
+gepeng atau melebar tergantung kecepatannya. Untuk melihat perahu dengan
+proporsi asli, agent juga menyimpan **frame utuh** (JPEG, ≤ `PF_FRAMES_FPS`,
+lebar ≤ `PF_FRAMES_WIDTH`) di ring buffer terpisah. Encoding JPEG berjalan di
+thread sendiri; bila kewalahan, frame arsip dilewati, sedangkan garis
+slit-scan tetap utuh.
+
+Saat ekstraksi, frame di jendela rekaman ditulis ke `<cam>-frames/` beserta
+indeks `<cam>-frames.json` (waktu & SHA-256 per frame). API memverifikasi
+semua hash, lalu `GET /api/captures/:id/frames` memetakan tiap frame ke kolom
+slit-scan terdekat. Di web, panel **Foto frame** menampilkan frame pada kolom
+yang ditunjuk (◀ ▶ / tombol panah).
+
 ## 6. Alur data — satu heat H2H
 
 1. Operator membuka sesi: `POST /api/sessions` (event, race, heat, lintasan

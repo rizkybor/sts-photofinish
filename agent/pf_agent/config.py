@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .slitscan import FinishLine
+from .frames import FrameArchiveConfig
+from .trigger import TriggerConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,6 +23,8 @@ class AgentConfig:
     buffer_seconds: float
     frame_width: int | None
     frame_height: int | None
+    trigger: TriggerConfig | None  # None = photocell virtual mati
+    frames: FrameArchiveConfig | None  # None = arsip frame utuh mati
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "AgentConfig":
@@ -42,4 +46,15 @@ class AgentConfig:
             buffer_seconds=float(e.get("PF_BUFFER_SECONDS", "20")),
             frame_width=int(e["PF_FRAME_WIDTH"]) if e.get("PF_FRAME_WIDTH") else None,
             frame_height=int(e["PF_FRAME_HEIGHT"]) if e.get("PF_FRAME_HEIGHT") else None,
+            trigger=TriggerConfig(
+                threshold=float(e.get("PF_TRIGGER_THRESHOLD", "30")),
+                min_run=float(e.get("PF_TRIGGER_MIN_RUN", "0.06")),
+                release_s=float(e.get("PF_TRIGGER_RELEASE_S", "0.5")),
+            ) if e.get("PF_TRIGGER", "off").lower() in ("camera", "on", "1", "true") else None,
+            frames=FrameArchiveConfig(
+                max_fps=float(e.get("PF_FRAMES_FPS", "60")),
+                width=int(e.get("PF_FRAMES_WIDTH", "1280")),
+                quality=int(e.get("PF_FRAMES_QUALITY", "85")),
+                seconds=float(e.get("PF_BUFFER_SECONDS", "20")),
+            ) if e.get("PF_FRAMES", "on").lower() not in ("off", "0", "false") else None,
         )

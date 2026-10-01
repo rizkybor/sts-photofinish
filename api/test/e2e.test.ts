@@ -2,7 +2,7 @@
 // Memakai MongoDB in-memory (unduh binary mongod sekali saat pertama jalan).
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -59,9 +59,10 @@ const until = async (cond: () => Promise<boolean> | boolean, ms = 5000) => {
 type ExtractReq = { groupId: string; sessionId: string; cameraId: string; fromHostNs: string; toHostNs: string; clock: { deviceOffsetNs: string | null; revision: number; mode: string } };
 
 /** Capture Agent palsu: jam agent = jam host, kolom 240 fps, file PNG palsu. */
-async function fakeAgent(agentToken: string) {
+async function fakeAgent(agentToken: string, opts: { frames?: number; corruptFrame?: boolean } = {}) {
   const s = await socket(agentToken);
   const requests: ExtractReq[] = [];
+  const rejected: string[] = [];
   s.on("agent:extract", async (req: ExtractReq) => {
     requests.push(req);
     const from = BigInt(req.fromHostNs), to = BigInt(req.toHostNs);
@@ -73,14 +74,37 @@ async function fakeAgent(agentToken: string) {
     const json = JSON.stringify({ cameraId: req.cameraId, columns });
     await writeFile(path.join(dir, "cam-1-slit.png"), png);
     await writeFile(path.join(dir, "cam-1-columns.json"), json);
+    let frameFields = {};
+    if (opts.frames) {
+      // Frame utuh pada kolom 0, 10, 20, … (jam agent sama dengan kolom)
+      await mkdir(path.join(dir, "cam-1-frames"), { recursive: true });
+      const entries = [];
+      for (let i = 1; i <= opts.frames; i++) {
+        const jpeg = Buffer.from(`frame-${i}`);
+        const rel = `${req.sessionId}/${req.groupId}/cam-1-frames/${String(i).padStart(5, "0")}.jpg`;
+        await writeFile(path.join(capturesDir, rel), jpeg);
+        entries.push({ file: rel, agentNs: columns[(i - 1) * 10]!, sha256: sha256Hex(jpeg) });
+      }
+      if (opts.corruptFrame) await writeFile(path.join(capturesDir, entries[0]!.file), "dirusak");
+      const index = JSON.stringify({ cameraId: "cam-1", scale: 0.5, finishLine: { x1: 160, y1: 0, x2: 160, y2: 359 }, frames: entries });
+      await writeFile(path.join(dir, "cam-1-frames.json"), index);
+      frameFields = { framesFile: `${req.sessionId}/${req.groupId}/cam-1-frames.json`, framesSha256: sha256Hex(index), frameCount: opts.frames };
+    }
     const res = await http("POST", "/api/captures", agentToken, {
       groupId: req.groupId, cameraId: req.cameraId, file: `${req.sessionId}/${req.groupId}/cam-1-slit.png`,
       columnsFile: `${req.sessionId}/${req.groupId}/cam-1-columns.json`, sha256: sha256Hex(png), columnsSha256: sha256Hex(json),
       fps: 240, width: columns.length, height: 100, fromAgentNs: columns[0], toAgentNs: columns.at(-1), agentOffsetNs: "0", agentRttNs: "500000",
+      ...frameFields,
     });
+    if (opts.corruptFrame) {
+      assert.equal(res.status, 400);
+      assert.match(res.data.error, /Frame rusak/);
+      rejected.push(req.groupId);
+      return;
+    }
     assert.equal(res.status, 201, JSON.stringify(res.data));
   });
-  return { socket: s, requests };
+  return { socket: s, requests, rejected };
 }
 
 before(async () => {
@@ -360,4 +384,214 @@ test("standby kamera: cuplikan hanya untuk operator, agent nyala/mati sesuai pen
   await until(() => toggles.at(-1)?.on === false);
   viewer.close();
   agent.close();
+});
+
+test("timing: kirim heat → sesi dibuat & diaktifkan, kirim ulang memakai sesi yang sama", async () => {
+  const timing = await socket(issueToken({ sub: "device:timing:h", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  const heat = {
+    type: "timing:session", eventId: "EVT-H", bucket: { divisionId: "D", raceId: "R", initialId: "I" }, raceCategory: "H2H",
+    heatId: "R1-H2", label: "H2H R4 Putra · Babak 1 · Heat 2",
+    lanes: [
+      { lane: "A", teamId: "t-1", bib: "21", teamName: "Tim Satu", crewExpected: 4 },
+      { lane: "B", teamId: "t-2", bib: "22", teamName: null, crewExpected: 4 },
+    ],
+  };
+  const first = await timing.emitWithAck("timing:session", signPayload(heat, SECRET));
+  assert.equal(first.ok, true, first.error);
+  assert.equal(first.created, true);
+  const s = (await database.col.sessions.findOne({ _id: new ObjectId(first.sessionId) }))!;
+  assert.equal(s.armed, true);
+  assert.deepEqual(s.bucket, heat.bucket);
+  assert.equal(s.lanes[1]!.bib, "22");
+
+  // Heat sama dikirim lagi (mis. setelah ganti tim) → sesi yang sama, lintasan diperbarui
+  const again = await timing.emitWithAck("timing:session", signPayload({ ...heat, lanes: [heat.lanes[0]] }, SECRET));
+  assert.equal(again.sessionId, first.sessionId);
+  assert.equal(again.created, false);
+  assert.equal((await database.col.sessions.findOne({ _id: s._id }))!.lanes.length, 1);
+
+  // Payload diubah setelah ditandatangani → ditolak
+  const forged = { ...signPayload(heat, SECRET), heatId: "R1-H9" };
+  assert.equal((await timing.emitWithAck("timing:session", forged)).ok, false);
+  timing.close();
+});
+
+test("photocell virtual: pemicu kamera memicu rekaman, waktu perahu dari kolom gambar", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const op = await login("op");
+  const agentToken = issueToken({ sub: "device:agent:t", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h");
+  const agent = await fakeAgent(agentToken);
+  const boot = randomUUID();
+  const trig = (seq: number, agentNs: bigint) =>
+    agent.socket.emitWithAck("agent:trigger", { cameraId: "cam-1", bootId: boot, seq, agentNs: agentNs.toString(), agentOffsetNs: "0" });
+
+  // Tanpa sesi aktif → diabaikan (orang lalu-lalang di luar heat)
+  await http("POST", "/api/sessions", op, { eventId: "EVT-T0", raceCategory: "H2H", label: "tidak aktif" });
+  for (const s of await database.col.sessions.find({ armed: true }).toArray()) await http("POST", `/api/sessions/${s._id}/disarm`, op);
+  const ignored = await trig(1, nowEpochNs());
+  assert.equal(ignored.ok, true);
+  assert.equal(ignored.accepted, false);
+
+  const { data: session } = await http("POST", "/api/sessions", op, {
+    eventId: "EVT-T", raceCategory: "H2H", label: "photocell virtual",
+    lanes: [{ lane: "A", teamId: "a", bib: "1" }, { lane: "B", teamId: "b", bib: "2" }],
+  });
+  await http("POST", `/api/sessions/${session._id}/arm`, op);
+
+  // sts-timingsystem mendengarkan → baris "Photo Finish" + Buffer-Timer-Finish
+  const timing = await socket(issueToken({ sub: "device:timing:pt", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  const notes: any[] = [];
+  timing.on("photofinish:trigger", (m: any) => notes.push(m));
+
+  // Dua perahu berdempetan → detektor memicu sekali, rekaman mencakup keduanya
+  const t0 = nowEpochNs();
+  const res = await trig(2, t0);
+  assert.equal(res.accepted, true);
+  await trig(2, t0); // kirim ulang → idempoten
+  const imps = await database.col.impulses.find({ sessionId: new ObjectId(session._id) }).toArray();
+  assert.equal(imps.length, 1);
+  assert.equal(imps[0]!.source, "camera");
+  await until(() => notes.length === 1);
+  assert.ok(verifyPayload(notes[0], SECRET), "notifikasi pemicu bertanda tangan HMAC");
+  assert.equal(notes[0].time, imps[0]!.deviceTime);
+  assert.match(notes[0].time, /^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+  assert.equal(notes[0].sessionId, session._id);
+  timing.close();
+
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) })) === 1);
+  const cap = (await http("GET", `/api/sessions/${session._id}`, op)).data.captures[0];
+  const a = (await http("POST", "/api/crossings", op, { captureId: cap._id, column: 60, rank: 1, lane: "A" })).data;
+  const b = (await http("POST", "/api/crossings", op, { captureId: cap._id, column: 61, rank: 2, lane: "B" })).data;
+  // Pemicu kamera bukan waktu resmi → keduanya memakai waktu kolom gambar, selisih 1 frame
+  assert.equal(a.timeSource ?? (await database.col.crossings.findOne({ _id: new ObjectId(a._id) }))!.timeSource, "camera");
+  const [ca, cb] = await Promise.all([a, b].map((x) => database.col.crossings.findOne({ _id: new ObjectId(x._id) })));
+  assert.equal(ca!.timeSource, "camera");
+  assert.equal(cb!.timeSource, "camera");
+  assert.equal(BigInt(cb!.timeNs!) - BigInt(ca!.timeNs!), 4_166_667n);
+  assert.ok(!ca!.warnings.some((w) => w.includes("Impuls")), "pemicu kamera tidak dihitung sebagai impuls berlebih");
+  agent.socket.close();
+});
+
+test("satu kamera satu agent: agent kedua dengan cameraId sama ditolak", async () => {
+  const token = issueToken({ sub: "device:agent:dup", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h");
+  const first = connect(base, { auth: { token, cameraId: "cam-dup" }, transports: ["websocket"], reconnection: false });
+  sockets.push(first);
+  await new Promise<void>((r) => first.once("connect", () => r()));
+  const second = connect(base, { auth: { token, cameraId: "cam-dup" }, transports: ["websocket"], reconnection: false });
+  sockets.push(second);
+  const rejected = await new Promise<{ error: string }>((r) => second.once("agent:rejected", r));
+  assert.match(rejected.error, /cam-dup.*sudah dipakai/);
+  await until(() => !second.connected);
+  assert.equal(first.connected, true, "agent pertama tetap jalan");
+  const other = connect(base, { auth: { token, cameraId: "cam-lain" }, transports: ["websocket"], reconnection: false });
+  sockets.push(other);
+  await new Promise<void>((r) => other.once("connect", () => r()));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(other.connected, true, "kamera lain boleh");
+  first.close(); other.close();
+});
+
+test("production: API menyajikan web app hasil build bila PF_WEB_DIR ada", async () => {
+  const webDir = await mkdtemp(path.join(tmpdir(), "pf-web-"));
+  await mkdir(path.join(webDir, "assets"));
+  await writeFile(path.join(webDir, "index.html"), "<!doctype html><title>STS Photo Finish</title>");
+  await writeFile(path.join(webDir, "assets", "app.js"), "console.log(1)");
+  const c = loadConfig({
+    NODE_ENV: "test", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_e2e_web", PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET,
+    PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir, PF_WEB_DIR: webDir,
+  });
+  const webApp = await buildApp(c, database);
+  await webApp.listen({ host: "127.0.0.1", port: 0 });
+  const addr = webApp.server.address();
+  const url = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
+  try {
+    assert.match(await (await fetch(url + "/")).text(), /STS Photo Finish/);
+    assert.equal((await fetch(url + "/assets/app.js")).headers.get("content-type")?.startsWith("text/javascript") || (await fetch(url + "/assets/app.js")).headers.get("content-type")?.includes("javascript"), true);
+    assert.match(await (await fetch(url + "/?standby")).text(), /STS Photo Finish/);
+    assert.match(await (await fetch(url + "/sesi/apa-saja")).text(), /STS Photo Finish/, "rute aplikasi → index.html");
+    const api404 = await fetch(url + "/api/tidak-ada");
+    assert.equal(api404.status, 404);
+    assert.match(await api404.text(), /Tidak ditemukan/);
+    assert.equal((await fetch(url + "/health")).status, 200);
+  } finally {
+    await webApp.close();
+    await rm(webDir, { recursive: true, force: true });
+  }
+});
+
+test("hapus tangkapan: file & tanda dihapus, impuls RaceTime2 kembali tanpa sesi, hasil terkonfirmasi dilindungi", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const [op, juri, lihat] = [await login("op"), await login("juri"), await login("lihat")];
+  const agent = await fakeAgent(issueToken({ sub: "device:agent:del", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"));
+  const timing = await socket(issueToken({ sub: "device:timing:del", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  timing.on("photofinish:verified", (_m: unknown, ack: (r: unknown) => void) => ack({ ok: true }));
+
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "EVT-DEL", raceCategory: "SPRINT", label: "hapus", lanes: [{ lane: "1", teamId: "t1" }] });
+  await http("POST", `/api/sessions/${session._id}/arm`, op);
+  const bootId = randomUUID();
+  const send = (seq: number) => timing.emitWithAck("timing:impulse", signPayload({ type: "timing:impulse", bootId, seq, channel: "FINISH", hostNs: nowEpochNs().toString() }, SECRET));
+  const capturesOf = () => database.col.captures.find({ sessionId: new ObjectId(session._id) }).toArray();
+
+  // Tangkapan 1: belum dikonfirmasi → boleh dihapus
+  const imp1 = (await send(1)).impulseId;
+  await until(async () => (await capturesOf()).length === 1);
+  const cap1 = (await capturesOf())[0]!;
+  await http("POST", "/api/crossings", op, { captureId: cap1._id.toHexString(), column: 3, rank: 1, lane: "1" });
+
+  assert.equal((await http("DELETE", `/api/groups/${cap1.groupId}`, lihat)).status, 403, "viewer tidak boleh menghapus");
+  const del = await http("DELETE", `/api/groups/${cap1.groupId}`, op);
+  assert.equal(del.status, 200, JSON.stringify(del.data));
+  assert.equal(del.data.racetimeImpulsesReturned, 1);
+  assert.equal(await database.col.groups.countDocuments({ _id: cap1.groupId }), 0);
+  assert.equal(await database.col.crossings.countDocuments({ groupId: cap1.groupId }), 0);
+  assert.equal((await capturesOf()).length, 0);
+  const back = (await database.col.impulses.findOne({ _id: new ObjectId(imp1) }))!;
+  assert.equal(back.sessionId, null, "impuls RaceTime2 kembali ke daftar tanpa sesi");
+  await assert.rejects(readFile(path.join(capturesDir, cap1.file)), "file gambar terhapus dari disk");
+  assert.ok(await database.col.audit.findOne({ action: "group.delete", entityId: cap1.groupId.toHexString() }));
+
+  // Tangkapan 2: sudah dikonfirmasi juri → ditolak
+  await send(2);
+  await until(async () => (await capturesOf()).length === 1);
+  const cap2 = (await capturesOf())[0]!;
+  const { data: c } = await http("POST", "/api/crossings", op, { captureId: cap2._id.toHexString(), column: 3, rank: 1, lane: "1" });
+  await http("POST", `/api/crossings/${c._id}/confirm`, juri, { teamId: "t1", crewInBoat: 4, crewExpected: 4, upright: true });
+  const blocked = await http("DELETE", `/api/groups/${cap2.groupId}`, op);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.error, /dikonfirmasi juri/);
+  agent.socket.close();
+  timing.close();
+});
+
+test("frame utuh: dipetakan ke kolom slit-scan, diverifikasi hash, ikut terhapus", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const op = await login("op");
+  const token = issueToken({ sub: "device:agent:fr", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h");
+  const agent = await fakeAgent(token, { frames: 5 });
+  const timing = await socket(issueToken({ sub: "device:timing:fr", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "EVT-FR", raceCategory: "SPRINT", label: "frame" });
+  await http("POST", `/api/sessions/${session._id}/arm`, op);
+  await timing.emitWithAck("timing:impulse", signPayload({ type: "timing:impulse", bootId: randomUUID(), seq: 1, channel: "FINISH", hostNs: nowEpochNs().toString() }, SECRET));
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) })) === 1);
+  const cap = (await database.col.captures.findOne({ sessionId: new ObjectId(session._id) }))!;
+  assert.equal(cap.frameCount, 5);
+
+  const { data } = await http("GET", `/api/captures/${cap._id}/frames`, op);
+  assert.deepEqual(data.frames.map((f: any) => f.column), [0, 10, 20, 30, 40]);
+  assert.deepEqual(data.finishLine, { x1: 160, y1: 0, x2: 160, y2: 359 });
+  assert.equal(await (await fetch(base + data.frames[2].url)).text(), "frame-3");
+
+  // Hapus tangkapan → folder frame ikut hilang
+  await http("DELETE", `/api/groups/${cap.groupId}`, op);
+  await assert.rejects(readFile(path.join(capturesDir, cap.framesFile!.replace(/\.json$/, ""), "00001.jpg")));
+  agent.socket.close();
+
+  // Frame dirusak setelah hash dihitung → rekaman ditolak
+  const bad = await fakeAgent(issueToken({ sub: "device:agent:fr2", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"), { frames: 2, corruptFrame: true });
+  await http("POST", `/api/sessions/${session._id}/arm`, op);
+  await timing.emitWithAck("timing:impulse", signPayload({ type: "timing:impulse", bootId: randomUUID(), seq: 1, channel: "FINISH", hostNs: nowEpochNs().toString() }, SECRET));
+  await until(() => bad.rejected.length === 1);
+  assert.equal(await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) }), 0);
+  bad.socket.close();
+  timing.close();
 });

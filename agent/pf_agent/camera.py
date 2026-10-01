@@ -52,13 +52,23 @@ class CameraSource:
             cap.set(cv2.CAP_PROP_FPS, self._target_fps)
         return cap
 
-    def snapshot(self) -> np.ndarray:
+    def snapshot(self, warmup_s: float = 5.0) -> np.ndarray:
+        # Kamera USB/FaceTime di macOS sering mengembalikan frame kosong sesaat
+        # setelah dibuka (sensor belum siap) — coba terus beberapa detik.
         cap = self.open()
         try:
-            ok, frame = cap.read()
-            if not ok:
-                raise SystemExit("Gagal membaca frame dari kamera")
-            return frame
+            deadline = time.monotonic() + warmup_s
+            while True:
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    return frame
+                if time.monotonic() > deadline:
+                    raise SystemExit(
+                        "Gagal membaca frame dari kamera. Periksa: (1) izin kamera untuk aplikasi terminal di "
+                        "System Settings → Privacy & Security → Camera, lalu buka ulang terminal; "
+                        "(2) kamera tidak sedang dipakai aplikasi lain (FaceTime/Zoom/Meet)."
+                    )
+                time.sleep(0.1)
         finally:
             cap.release()
 
