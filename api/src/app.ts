@@ -10,17 +10,20 @@ import { createAuditLog } from "./audit.js";
 import { issueToken, makeGuards, verifyPassword } from "./auth.js";
 import type { Config } from "./config.js";
 import type { Database } from "./db.js";
-import { openFile, resolveCapturePath, verifyFileUrl } from "./files.js";
+import { openFile, resolveCapturePath, saveUploadedCapture, verifyFileUrl } from "./files.js";
 import { createRealtime } from "./realtime.js";
 import {
   CalibrateBody, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, LoginBody, SessionCreate, TimingClock, TimingImpulse,
 } from "./schemas.js";
 import { createService, HttpError } from "./service.js";
 
+const MAX_UPLOAD = 30 * 1024 * 1024; // slit-scan PNG terbesar ± beberapa MB
+
 export async function buildApp(cfg: Config, database: Database) {
   const app: FastifyInstance = Fastify({
     logger: { level: cfg.NODE_ENV === "production" ? "info" : cfg.NODE_ENV === "test" ? "warn" : "debug", redact: ["req.headers.authorization"] },
     bodyLimit: 256 * 1024,
+    trustProxy: cfg.PF_TRUST_PROXY,
   });
   await app.register(cors, { origin: cfg.corsOrigins, credentials: true });
   await app.register(rateLimit, { global: false });
@@ -125,6 +128,19 @@ export async function buildApp(cfg: Config, database: Database) {
     reply.code(201).send(await service.addCapture(req.principal!, CaptureCreate.parse(req.body))));
 
   // ------------------------------------------------------------ tangkapan (kelompok finish)
+  // Unggah file rekaman dari agent jarak jauh (API di VPS, agent di lokasi).
+  // Agent mengunggah semua file dulu, lalu POST /api/captures memverifikasi hash.
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: MAX_UPLOAD }, (_req, body, done) => done(null, body));
+  app.put("/api/capture-files/*", { preHandler: guard.require("device", "agent"), bodyLimit: MAX_UPLOAD }, async (req, reply) => {
+    const rel = decodeURIComponent((req.params as { "*": string })["*"]);
+    if (!Buffer.isBuffer(req.body)) throw new HttpError(415, "Kirim sebagai application/octet-stream");
+    try {
+      return reply.code(201).send({ sha256: await saveUploadedCapture(cfg.PF_CAPTURES_DIR, rel, req.body) });
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+  });
+
   app.get("/api/captures/:id/frames", { preHandler: guard.require("viewer") }, async (req) =>
     service.captureFrames(IdParam.parse(req.params).id));
 

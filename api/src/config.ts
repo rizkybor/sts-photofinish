@@ -8,6 +8,8 @@ const Env = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PF_HOST: z.string().default("0.0.0.0"),
   PF_PORT: z.coerce.number().int().positive().default(4100),
+  /** true bila API di belakang reverse proxy (Nginx di VPS) — IP asli dari X-Forwarded-For untuk batas login. */
+  PF_TRUST_PROXY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   PF_MONGO_URL: z.string().default("mongodb://127.0.0.1:27017"),
   PF_MONGO_DB: z.string().default("sts_photofinish"),
   // Secret wajib panjang — tidak ada nilai default agar tidak pernah jalan

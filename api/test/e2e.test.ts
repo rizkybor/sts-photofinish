@@ -59,8 +59,16 @@ const until = async (cond: () => Promise<boolean> | boolean, ms = 5000) => {
 type ExtractReq = { groupId: string; sessionId: string; cameraId: string; fromHostNs: string; toHostNs: string; clock: { deviceOffsetNs: string | null; revision: number; mode: string } };
 
 /** Capture Agent palsu: jam agent = jam host, kolom 240 fps, file PNG palsu. */
-async function fakeAgent(agentToken: string, opts: { frames?: number; corruptFrame?: boolean } = {}) {
+async function fakeAgent(agentToken: string, opts: { frames?: number; corruptFrame?: boolean; remote?: boolean } = {}) {
   const s = await socket(agentToken);
+  // remote = agent di lokasi, API di VPS: file diunggah lewat HTTP, bukan ditulis ke disk API.
+  const save = async (rel: string, data: Buffer | string) => {
+    if (!opts.remote) return writeFile(path.join(capturesDir, rel), data);
+    const res = await fetch(`${base}/api/capture-files/${rel}`, {
+      method: "PUT", headers: { authorization: `Bearer ${agentToken}`, "content-type": "application/octet-stream" }, body: Buffer.from(data),
+    });
+    assert.equal(res.status, 201, await res.text());
+  };
   const requests: ExtractReq[] = [];
   const rejected: string[] = [];
   s.on("agent:extract", async (req: ExtractReq) => {
@@ -69,25 +77,25 @@ async function fakeAgent(agentToken: string, opts: { frames?: number; corruptFra
     const columns: string[] = [];
     for (let t = from; t <= to; t += 4_166_667n) columns.push(t.toString());
     const dir = path.join(capturesDir, req.sessionId, req.groupId);
-    await mkdir(dir, { recursive: true });
+    if (!opts.remote) await mkdir(dir, { recursive: true });
     const png = Buffer.from("fake-png");
     const json = JSON.stringify({ cameraId: req.cameraId, columns });
-    await writeFile(path.join(dir, "cam-1-slit.png"), png);
-    await writeFile(path.join(dir, "cam-1-columns.json"), json);
+    await save(`${req.sessionId}/${req.groupId}/cam-1-slit.png`, png);
+    await save(`${req.sessionId}/${req.groupId}/cam-1-columns.json`, json);
     let frameFields = {};
     if (opts.frames) {
       // Frame utuh pada kolom 0, 10, 20, … (jam agent sama dengan kolom)
-      await mkdir(path.join(dir, "cam-1-frames"), { recursive: true });
+      if (!opts.remote) await mkdir(path.join(dir, "cam-1-frames"), { recursive: true });
       const entries = [];
       for (let i = 1; i <= opts.frames; i++) {
         const jpeg = Buffer.from(`frame-${i}`);
         const rel = `${req.sessionId}/${req.groupId}/cam-1-frames/${String(i).padStart(5, "0")}.jpg`;
-        await writeFile(path.join(capturesDir, rel), jpeg);
+        await save(rel, jpeg);
         entries.push({ file: rel, agentNs: columns[(i - 1) * 10]!, sha256: sha256Hex(jpeg) });
       }
       if (opts.corruptFrame) await writeFile(path.join(capturesDir, entries[0]!.file), "dirusak");
       const index = JSON.stringify({ cameraId: "cam-1", scale: 0.5, finishLine: { x1: 160, y1: 0, x2: 160, y2: 359 }, frames: entries });
-      await writeFile(path.join(dir, "cam-1-frames.json"), index);
+      await save(`${req.sessionId}/${req.groupId}/cam-1-frames.json`, index);
       frameFields = { framesFile: `${req.sessionId}/${req.groupId}/cam-1-frames.json`, framesSha256: sha256Hex(index), frameCount: opts.frames };
     }
     const res = await http("POST", "/api/captures", agentToken, {
@@ -593,5 +601,38 @@ test("frame utuh: dipetakan ke kolom slit-scan, diverifikasi hash, ikut terhapus
   await until(() => bad.rejected.length === 1);
   assert.equal(await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) }), 0);
   bad.socket.close();
+  timing.close();
+});
+
+test("mode VPS: agent jarak jauh mengunggah rekaman lewat HTTP, path & peran dibatasi", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const [op, juri] = [await login("op"), await login("juri")];
+  const token = issueToken({ sub: "device:agent:vps", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h");
+  const put = (rel: string, tok: string, body = "x") => fetch(`${base}/api/capture-files/${rel}`, {
+    method: "PUT", headers: { authorization: `Bearer ${tok}`, "content-type": "application/octet-stream" }, body,
+  });
+  const ok = "0123456789abcdef01234567/0123456789abcdef01234567";
+  assert.equal((await put(`${ok}/cam-1-slit.png`, juri)).status, 403, "hanya agent yang boleh mengunggah");
+  assert.equal((await put("..%2F..%2Fetc%2Fpasswd", token)).status, 400, "path traversal (ter-encode) ditolak API");
+  assert.notEqual((await put("../../etc/passwd", token)).status, 201, "path traversal biasa tidak pernah tersimpan");
+  assert.equal((await put(`${ok}/cam-1-slit.png.sh`, token)).status, 400);
+  assert.equal((await put(`${ok}%2F..%2Fx%2Fcam-1-slit.png`, token)).status, 400);
+  const res = await put(`${ok}/cam-1-slit.png`, token, "isi-png");
+  assert.equal(res.status, 201);
+  assert.equal((await res.json()).sha256, sha256Hex("isi-png"));
+  assert.equal(await readFile(path.join(capturesDir, ok, "cam-1-slit.png"), "utf8"), "isi-png");
+
+  // Alur lengkap: rekaman + 3 foto frame diunggah, lalu terdaftar & bisa dibuka
+  const agent = await fakeAgent(token, { frames: 3, remote: true });
+  const timing = await socket(issueToken({ sub: "device:timing:vps", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "EVT-VPS", raceCategory: "SPRINT", label: "vps" });
+  await http("POST", `/api/sessions/${session._id}/arm`, op);
+  await timing.emitWithAck("timing:impulse", signPayload({ type: "timing:impulse", bootId: randomUUID(), seq: 1, channel: "FINISH", hostNs: nowEpochNs().toString() }, SECRET));
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(session._id) })) === 1);
+  const cap = (await database.col.captures.findOne({ sessionId: new ObjectId(session._id) }))!;
+  assert.equal(cap.frameCount, 3);
+  const { data } = await http("GET", `/api/captures/${cap._id}/frames`, op);
+  assert.equal(await (await fetch(base + data.frames[1].url)).text(), "frame-2");
+  agent.socket.close();
   timing.close();
 });

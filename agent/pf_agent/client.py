@@ -1,6 +1,7 @@
 """Koneksi ke Photo Finish API: sinkron jam, terima agent:extract, kirim capture."""
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
@@ -206,7 +207,35 @@ class AgentClient:
         except Exception:  # noqa: BLE001
             log.exception("Ekstraksi kelompok %s gagal", req.get("groupId"))
 
+    def _upload(self, r: ExtractResult) -> None:
+        """Mode VPS: unggah semua file rekaman ke API sebelum didaftarkan.
+
+        Salinan lokal tetap disimpan di laptop lokasi sebagai cadangan bukti.
+        Frame utuh diunggah lebih dulu, indeksnya terakhir — API memverifikasi
+        hash setiap frame saat rekaman didaftarkan.
+        """
+        rels: list[str] = []
+        if r.frames_file:
+            index = json.loads((self.cfg.captures_dir / r.frames_file).read_text())
+            rels += [f["file"] for f in index["frames"]]
+        rels += [r.file, r.columns_file] + ([r.frames_file] if r.frames_file else [])
+        for rel in rels:
+            data = (self.cfg.captures_dir / rel).read_bytes()
+            for attempt in range(3):
+                try:
+                    res = self.http.put(f"/api/capture-files/{rel}", content=data, headers={"content-type": "application/octet-stream"}, timeout=30)
+                    if res.status_code == 201:
+                        break
+                    raise RuntimeError(f"{res.status_code} {res.text}")
+                except Exception as err:  # noqa: BLE001 — koneksi lokasi bisa putus-sambung
+                    if attempt == 2:
+                        raise RuntimeError(f"Gagal mengunggah {rel}: {err}") from err
+                    time.sleep(1 + attempt)
+        log.info("%d file rekaman diunggah ke API", len(rels))
+
     def _post_capture(self, group_id: str, r: ExtractResult, offset_ns: int, rtt_ns: int) -> None:
+        if self.cfg.upload_captures:
+            self._upload(r)
         d = asdict(r)
         body = {
             "groupId": group_id,

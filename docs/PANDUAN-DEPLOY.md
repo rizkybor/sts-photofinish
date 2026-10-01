@@ -35,6 +35,10 @@ juri, HP) tersambung lewat **Wi-Fi/hotspot lokal**.
 sts-timingsystem boleh berjalan di laptop yang sama atau laptop lain di
 jaringan yang sama.
 
+Ingin server yang bisa diakses dari internet (demo, uji jarak jauh)? Lihat
+[PANDUAN-VPS.md](PANDUAN-VPS.md): API di VPS dengan HTTPS, agent kamera tetap di
+lokasi dan mengunggah rekaman (`PF_UPLOAD_CAPTURES=on`).
+
 ---
 
 ## 2. Kebutuhan
@@ -95,6 +99,27 @@ npm run setup
 | `PF_FRAMES` | `on` / `off` | Simpan foto frame utuh untuk panel **Foto frame** (tinjauan frame demi frame) |
 | `PF_FRAMES_FPS`, `PF_FRAMES_WIDTH` | 60, 1280 | Batas fps & lebar foto frame. Turunkan bila laptop berat atau RAM terbatas |
 | `PF_CORS_ORIGINS` | `http://localhost:5173` | Hanya untuk mode dev. Production tidak perlu diubah |
+
+### 3.1b Database: MongoDB yang sama dengan sts-timingsystem
+
+sts-timingsystem memakai **MongoDB Atlas** (cluster `mongo-jeko…`, database
+`sustainabledb_atlas`). Photo Finish dapat memakai **cluster dan akun Atlas
+yang sama** dengan **database terpisah** `sts_photofinish`, supaya koleksinya
+tidak tercampur dengan data timing dan tidak tersentuh fitur backup/reset timing.
+
+```
+PF_MONGO_URL=<connection string Atlas yang sama dengan sts-timingsystem>
+PF_MONGO_DB=sts_photofinish        # atau sustainabledb_atlas bila ingin satu database
+PF_PM2_MONGO=off                   # tidak perlu MongoDB lokal
+```
+
+Yang perlu diperhatikan:
+
+- **Butuh internet** di lokasi. Aturan ini sama dengan sts-timingsystem saat
+  memakai Atlas. Tanpa internet, gunakan MongoDB lokal (`mongodb://127.0.0.1:27018`).
+- **Atlas → Network Access**: izinkan IP laptop lokasi dan IP VPS.
+- Akun pengguna Photo Finish (`pf_users`) ada di database Photo Finish.
+  Setelah pindah database, buat ulang akun dengan `user:create`, atau salin dari database lama.
 
 ### 3.2 Memilih kamera
 

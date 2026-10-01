@@ -156,3 +156,36 @@ def test_arsip_frame_utuh_dibatasi_fps_dan_ditulis_bersama_slitscan(tmp_path):
     assert first["file"] == "s1/g9/cam-1-frames/00001.jpg"
     assert hashlib.sha256((tmp_path / first["file"]).read_bytes()).hexdigest() == first["sha256"]
     archive.stop()
+
+
+def test_mode_vps_mengunggah_semua_file_rekaman(tmp_path):
+    """Agent di lokasi, API di VPS: frame, slit-scan, kolom, lalu indeks frame diunggah."""
+    from pf_agent.client import AgentClient
+    from pf_agent.config import AgentConfig
+
+    frames, _ = synthetic_race(n_frames=30)
+    coords = slitscan.line_coords(slitscan.FinishLine(60, 0, 60, 39), 120, 40)
+    ring = LineRing(capacity=100, line_len=len(coords[0]))
+    import cv2
+    jpegs = []
+    for i, f in enumerate(frames):
+        ts = 1_000_000_000 + i * 4_166_667
+        ring.push(ts, slitscan.sample_line(f, coords))
+        jpegs.append((ts, cv2.imencode(".jpg", f)[1].tobytes()))
+    r = extract(ring, 0, 10**12, tmp_path, "a" * 24, "b" * 24, "cam-1", frames=jpegs[:3], finish_line=slitscan.FinishLine(60, 0, 60, 39))
+
+    cfg = AgentConfig.from_env({"PF_DEVICE_TOKEN": "t", "PF_FINISH_LINE": "60,0,60,39", "PF_CAPTURES_DIR": str(tmp_path), "PF_UPLOAD_CAPTURES": "on"})
+    assert cfg.upload_captures is True
+    client = AgentClient(cfg, ring)
+    sent = []
+
+    class FakeResp:
+        status_code = 201
+        text = ""
+
+    client.http.put = lambda url, content, headers, timeout: sent.append((url, len(content))) or FakeResp()
+    client._upload(r)
+    paths = [u.removeprefix("/api/capture-files/") for u, _ in sent]
+    assert paths[:3] == [f"{'a'*24}/{'b'*24}/cam-1-frames/0000{i}.jpg" for i in (1, 2, 3)]
+    assert paths[3:] == [r.file, r.columns_file, r.frames_file]  # indeks frame paling akhir
+    assert all(n > 0 for _, n in sent)
