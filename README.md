@@ -50,7 +50,7 @@ memutarnya seolah-olah live.
 | Peran | Bisa |
 |---|---|
 | `viewer` | Melihat sesi & rekaman (pelatih/atlet) |
-| `operator` | Membuat & mengaktifkan sesi, kalibrasi, menandai urutan perahu |
+| `operator` | Membuat & mengaktifkan sesi, **standby kamera** (cek kamera lurus), kalibrasi, menandai urutan perahu |
 | `judge` | + Mengonfirmasi/mengoreksi hasil (dikirim ke timing system) |
 | `admin` | + Kalibrasi jam Photo Finish terhadap RaceTime2 (klik jam di header), memeriksa keutuhan audit log |
 

@@ -49,7 +49,7 @@ export async function buildApp(cfg: Config, database: Database) {
   app.get("/health", async () => ({ ok: true }));
 
   app.post("/api/auth/login", {
-    config: { rateLimit: { max: 10, timeWindow: "5 minutes" } },
+    config: { rateLimit: { max: cfg.PF_LOGIN_RATE_MAX, timeWindow: "5 minutes" } },
   }, async (req, reply) => {
     const body = LoginBody.parse(req.body);
     const user = await col.users.findOne({ username: body.username });

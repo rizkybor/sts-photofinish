@@ -109,3 +109,19 @@ def test_tanpa_kalibrasi_jam_tetap_merekam_waktu_relatif(tmp_path):
         ring.push(1_000_000_000 + i * 4_166_667, slitscan.sample_line(f, coords))
     r = extract(ring, 0, 2_000_000_000, tmp_path, "s1", "g2", "cam-1")
     assert json.loads((tmp_path / r.columns_file).read_text())["pfTimes"] is None
+
+
+def test_cuplikan_standby_diperkecil_dan_berformat_jpeg():
+    import cv2
+    from pf_agent.preview import encode_preview
+
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    frame[:, 960] = 255  # garis tegak di tengah
+    jpeg = encode_preview(frame)
+    assert jpeg[:2] == b"\xff\xd8" and len(jpeg) < 200_000
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert img.shape[:2] == (540, 960)
+    assert img[270, 478:482].max() > 100  # garis tetap di tengah setelah diperkecil
+
+    small = np.zeros((360, 640, 3), dtype=np.uint8)
+    assert cv2.imdecode(np.frombuffer(encode_preview(small), np.uint8), cv2.IMREAD_COLOR).shape[:2] == (360, 640)

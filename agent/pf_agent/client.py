@@ -12,19 +12,42 @@ import socketio
 from .clock import OffsetEstimator, now_ns
 from .config import AgentConfig
 from .extract import ClockSnapshot, ExtractResult, extract
+from .preview import encode_preview
 from .ringbuffer import LineRing
 
 log = logging.getLogger(__name__)
+
+PREVIEW_INTERVAL_S = 0.25  # ±4 fps — cukup untuk mengatur posisi kamera
 
 SYNC_INTERVAL_S = 2.0
 SYNC_BURST = 4
 WAIT_FOR_FRAMES_S = 10.0
 
 
+class LatestFrame:
+    """Frame terakhir dari kamera (untuk cuplikan standby), aman antar-thread."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ts = 0
+        self._frame = None
+
+    def set(self, ts: int, frame) -> None:
+        with self._lock:
+            self._ts, self._frame = ts, frame
+
+    def get(self):
+        with self._lock:
+            return self._ts, self._frame
+
+
 class AgentClient:
-    def __init__(self, cfg: AgentConfig, ring: LineRing) -> None:
+    def __init__(self, cfg: AgentConfig, ring: LineRing, latest: LatestFrame | None = None, camera=None) -> None:
         self.cfg = cfg
         self.ring = ring
+        self.latest = latest
+        self.camera = camera
+        self._preview_on = threading.Event()
         self.clock = OffsetEstimator()
         self.sio = socketio.Client(reconnection=True, reconnection_delay_max=5)
         self.http = httpx.Client(base_url=cfg.api_url, headers={"authorization": f"Bearer {cfg.device_token}"}, timeout=10)
@@ -32,10 +55,12 @@ class AgentClient:
         self.sio.on("connect", lambda: log.info("Terhubung ke API %s", cfg.api_url))
         self.sio.on("disconnect", lambda *_: log.warning("Terputus dari API — mencoba lagi"))
         self.sio.on("agent:extract", self._on_extract)
+        self.sio.on("agent:preview", self._on_preview)
 
     def run(self) -> None:
         self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token}, transports=["websocket"], wait_timeout=10)
         threading.Thread(target=self._sync_loop, name="clock-sync", daemon=True).start()
+        threading.Thread(target=self._preview_loop, name="preview", daemon=True).start()
         try:
             self.sio.wait()
         finally:
@@ -62,6 +87,39 @@ class AgentClient:
                     best = self.clock.best()
                     log.debug("offset=%.3f ms rtt=%.3f ms", best.offset_ns / 1e6, best.rtt_ns / 1e6)
             self._stop.wait(SYNC_INTERVAL_S)
+
+    # ------------------------------------------------------------ cuplikan standby
+
+    def _on_preview(self, req: dict) -> None:
+        if req.get("cameraId") != self.cfg.camera_id:
+            return
+        if req.get("on"):
+            self._preview_on.set()
+            log.info("Cuplikan standby kamera dimulai")
+        else:
+            self._preview_on.clear()
+            log.info("Cuplikan standby kamera dihentikan")
+
+    def _preview_loop(self) -> None:
+        while not self._stop.is_set():
+            if not self._preview_on.wait(timeout=1.0) or self.latest is None or not self.sio.connected:
+                continue
+            ts, frame = self.latest.get()
+            if frame is not None:
+                try:
+                    line = self.cfg.finish_line
+                    self.sio.emit("agent:preview-frame", {
+                        "cameraId": self.cfg.camera_id,
+                        "agentNs": str(ts),
+                        "width": int(frame.shape[1]),
+                        "height": int(frame.shape[0]),
+                        "fps": round(getattr(self.camera, "measured_fps", 0.0), 1),
+                        "finishLine": {"x1": line.x1, "y1": line.y1, "x2": line.x2, "y2": line.y2},
+                        "jpeg": encode_preview(frame),
+                    })
+                except Exception as err:  # noqa: BLE001 — cuplikan tidak boleh mengganggu perekaman
+                    log.debug("cuplikan gagal: %s", err)
+            self._stop.wait(PREVIEW_INTERVAL_S)
 
     # ------------------------------------------------------------ ekstraksi
 

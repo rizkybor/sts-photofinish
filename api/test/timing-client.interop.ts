@@ -39,7 +39,7 @@ before(async () => {
   if (skip) return;
   mongo = await MongoMemoryServer.create();
   capturesDir = await mkdtemp(path.join(tmpdir(), "pf-interop-"));
-  const cfg = loadConfig({ NODE_ENV: "test", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_interop", PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir, PF_GROUP_QUIET_MS: "200" });
+  const cfg = loadConfig({ NODE_ENV: "test", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_interop", PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir, PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000" });
   database = await connectDb(cfg);
   app = await buildApp(cfg, database);
   await app.listen({ host: "127.0.0.1", port: 0 });

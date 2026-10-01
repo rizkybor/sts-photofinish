@@ -7,7 +7,7 @@ import cv2
 
 from . import slitscan
 from .camera import CameraSource
-from .client import AgentClient
+from .client import AgentClient, LatestFrame
 from .config import AgentConfig
 from .extract import preview_with_line
 from .ringbuffer import LineRing
@@ -38,9 +38,15 @@ def main() -> None:
     ring = LineRing(capacity, line_len=len(coords[0]), channels=first.shape[2] if first.ndim == 3 else 1)
     logging.info("Kamera %s %dx%d, buffer %d frame (%.0f dtk @ %.0f fps)", cfg.camera_id, width, height, capacity, cfg.buffer_seconds, cfg.camera_fps)
 
-    camera.start(lambda ts, frame: ring.push(ts, slitscan.sample_line(frame, coords)))
+    latest = LatestFrame()
+
+    def on_frame(ts: int, frame) -> None:
+        ring.push(ts, slitscan.sample_line(frame, coords))
+        latest.set(ts, frame)  # hanya referensi — untuk cuplikan standby
+
+    camera.start(on_frame)
     try:
-        AgentClient(cfg, ring).run()
+        AgentClient(cfg, ring, latest=latest, camera=camera).run()
     finally:
         camera.stop()
 
