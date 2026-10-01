@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Hasil rekaman (bukti lomba — dikelola lewat backup, bukan git)
+data/captures/*
+!data/captures/.gitkeep
