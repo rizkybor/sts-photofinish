@@ -11,7 +11,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "user:create": "tsx --env-file-if-exists=../.env src/cli/user-create.ts",
     "token:device": "tsx --env-file-if-exists=../.env src/cli/token-device.ts",
-    "test:interop": "node --import tsx --test test/timing-client.interop.ts"
+    "test:interop": "node --import tsx --test test/timing-client.interop.ts",
+    "sim:timing": "tsx --env-file-if-exists=../.env src/cli/sim-timing.ts"
   },
   "engines": {
     "node": ">=20.6"
