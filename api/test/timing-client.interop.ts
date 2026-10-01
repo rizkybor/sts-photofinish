@@ -89,6 +89,7 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   const saved: Record<string, unknown> = {};
   const received: any[] = [];
   const statuses: any[] = [];
+  const triggers: any[] = [];
   const timingToken = issueToken({ sub: "device:timing:i", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h");
   const client = core.createPhotofinishClient({
     apiUrl: base, deviceToken: timingToken, hmacSecret: SECRET, io: timingIo,
@@ -96,6 +97,7 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
     now: () => nowEpochNs().toString(),
     onVerified: (m: any) => received.push(m),
     onStatus: (s: any) => statuses.push(s),
+    onTrigger: (m: any) => triggers.push(m),
   });
 
   // Frame bare RaceTime2 (formatted kosong), 20 byte di 1200 baud
@@ -132,6 +134,31 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   assert.equal(client.pending().length, 0);
   assert.deepEqual(saved.pending, {});
 
+  // Tombol "Kirim heat ke Photo Finish" (armHeat) — termasuk field null & angka
+  const armed = await client.armHeat({
+    eventId: "E1", bucket: { divisionId: "d1", raceId: "r1", initialId: "i1" }, raceCategory: "RX", heatId: "R1-H3",
+    label: "RX R4 Putra · Heat Round 1 · Heat 3",
+    lanes: [
+      { lane: "1", teamId: "T-1", bib: "31", teamName: "Satu", crewExpected: 4 },
+      { lane: "2", teamId: "T-2", bib: "", teamName: null, crewExpected: null },
+    ],
+  });
+  assert.equal(armed.ok, true, armed.error);
+  const rx = (await database.col.sessions.findOne({ _id: new ObjectId(armed.sessionId) }))!;
+  assert.equal(rx.armed, true);
+  assert.equal(rx.raceCategory, "RX");
+  assert.deepEqual(rx.lanes[1], { lane: "2", teamId: "T-2", bib: null, teamName: null, crewExpected: null });
+  assert.equal((await database.col.sessions.findOne({ _id: new ObjectId(session._id) }))!.armed, false, "hanya satu sesi aktif");
+
+  // Perahu lewat garis di kamera → timing menerima baris "Photo Finish" + waktu
+  const res = await agent.emitWithAck("agent:trigger", { cameraId: "cam-1", bootId: crypto.randomUUID(), seq: 1, agentNs: nowEpochNs().toString(), agentOffsetNs: "0" });
+  assert.equal(res.accepted, true);
+  await until(() => triggers.length === 1);
+  assert.equal(triggers[0].raceCategory, "RX");
+  assert.match(triggers[0].time, /^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+  assert.deepEqual(triggers[0].bucket, { divisionId: "d1", raceId: "r1", initialId: "i1" });
+
   client.stop();
+  assert.equal((await client.armHeat({ eventId: "E1", bucket: { divisionId: "d", raceId: "r", initialId: "i" }, raceCategory: "H2H", heatId: null, label: "x", lanes: [] })).ok, false);
   agent.close();
 });

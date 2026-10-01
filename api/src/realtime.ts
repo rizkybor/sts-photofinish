@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import { allows, type Principal, verifyToken } from "./auth.js";
 import type { Config } from "./config.js";
-import { TimingClock, TimingImpulse } from "./schemas.js";
+import { AgentTrigger, TimingClock, TimingImpulse } from "./schemas.js";
 import type { Bus, Service } from "./service.js";
 
 const ACK_TIMEOUT_MS = 5000;
@@ -44,6 +44,7 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
       io.to("agents").emit(event, data);
       return true;
     },
+    notifyTiming: (event, data) => void io.to("timing").emit(event, data),
     toTiming: async (event, data) => {
       if ((io.sockets.adapter.rooms.get("timing")?.size ?? 0) === 0) return false;
       try {
@@ -78,14 +79,30 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
           return { impulseId: imp._id.toHexString() };
         }));
         socket.on("timing:clock", (raw: unknown, ack?: Ack) => handle(ack, () => service.updateClock(TimingClock.parse(raw))));
+        socket.on("timing:session", (raw: unknown, ack?: Ack) => handle(ack, () => service.sessionFromTiming(p, raw)));
         service.redeliverPending().catch((err) => console.error("[redeliver]", err));
         return;
       }
 
       if (p.role === "device" && p.deviceKind === "agent") {
+        // Satu kamera = satu agent. Dua agent dengan cameraId sama membuat
+        // cuplikan standby bergantian (berkedip) dan rekaman terkirim ganda.
+        const cameraId = socket.handshake.auth?.cameraId;
+        if (typeof cameraId === "string" && CAMERA_ID.test(cameraId)) {
+          const dup = [...(io.sockets.adapter.rooms.get("agents") ?? [])]
+            .map((id) => io.sockets.sockets.get(id))
+            .some((s) => s && s.id !== socket.id && s.data.cameraId === cameraId);
+          if (dup) {
+            socket.emit("agent:rejected", { error: `Kamera "${cameraId}" sudah dipakai agent lain yang sedang berjalan. Hentikan agent lama (Ctrl+C) atau pakai PF_CAMERA_ID berbeda.` });
+            setTimeout(() => socket.disconnect(true), 200);
+            return;
+          }
+          socket.data.cameraId = cameraId;
+        }
         socket.join("agents");
         // Ping-pong sinkron jam agent (gaya NTP, agent memilih RTT terkecil).
         socket.on("clock:ping", (_: unknown, ack?: Ack) => ack?.({ ok: true, serverNs: service.serverNowNs().toString() }));
+        socket.on("agent:trigger", (raw: unknown, ack?: Ack) => handle(ack, () => service.ingestCameraTrigger(p, AgentTrigger.parse(raw))));
         socket.on("agent:preview-frame", (frame: unknown) => {
           const f = frame as { cameraId?: unknown; jpeg?: unknown };
           if (typeof f?.cameraId !== "string" || !CAMERA_ID.test(f.cameraId)) return;

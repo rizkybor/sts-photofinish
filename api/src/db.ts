@@ -50,6 +50,12 @@ export interface ImpulseDoc {
   channel: "FINISH" | "START";
   deviceTime: string;
   deviceTimeNs: string;
+  /**
+   * "racetime" = impuls dari sts-timingsystem (RaceTime2) — dipakai sebagai waktu resmi.
+   * "camera"   = pemicu photocell virtual dari agent — HANYA memicu rekaman; waktu
+   *              perahu lalu diambil dari kolom gambar. Dokumen lama tanpa field = racetime.
+   */
+  source?: "racetime" | "camera";
   /** "device" = waktu dari payload RaceTime2; "pf-clock" = frame bare, waktu dari jam PF saat diterima. */
   timeBasis: "device" | "pf-clock";
   /** Revisi jam PF yang dipakai bila timeBasis "pf-clock". */
@@ -117,6 +123,10 @@ export interface CaptureDoc {
   agentRttNs: string;
   /** Pengaturan jam PF yang dipakai saat rekaman dibuat (sama dengan yang dicetak di gambar). */
   clock: ClockSnapshot | null;
+  /** Indeks frame utuh untuk tinjauan frame-demi-frame (tidak ada pada rekaman lama). */
+  framesFile?: string;
+  framesSha256?: string;
+  frameCount?: number;
   createdAt: Date;
 }
 

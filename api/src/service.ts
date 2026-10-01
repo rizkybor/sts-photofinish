@@ -4,9 +4,11 @@ import type { AuditLog } from "./audit.js";
 import { signPayload, verifyPayload } from "./canonical.js";
 import type { Config } from "./config.js";
 import type { CaptureDoc, ClockSettingsDoc, ClockSnapshot, CrossingDoc, Database, GroupDoc, ImpulseDoc, SessionDoc } from "./db.js";
-import { fileSha256, readColumns, resolveCapturePath, signFileUrl } from "./files.js";
+import { rm, unlink } from "node:fs/promises";
+import { fileSha256, readColumns, readFramesIndex, resolveCapturePath, signFileUrl } from "./files.js";
 import { findTies, pairByOrder } from "./pairing.js";
 import type { z } from "zod";
+import { AgentTrigger, TimingSessionRequest } from "./schemas.js";
 import type { CalibrateBody, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
 import {
   deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, NS_PER_SEC, nowEpochNs, officialClock, parseClock, toNs, wrapDay,
@@ -20,6 +22,8 @@ export interface Bus {
   toAgents(event: string, data: unknown): boolean;
   /** Resolve true bila timing system meng-ack pesan. */
   toTiming(event: string, data: unknown): Promise<boolean>;
+  /** Kirim ke timing system tanpa menunggu ack (notifikasi langsung, boleh hilang). */
+  notifyTiming(event: string, data: unknown): void;
 }
 
 export class HttpError extends Error {
@@ -202,6 +206,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       channel: msg.channel,
       deviceTime: msg.deviceTime ?? formatClock(deviceTimeNs, 3),
       deviceTimeNs: deviceTimeNs.toString(),
+      source: "racetime",
       timeBasis: msg.deviceTime ? "device" : "pf-clock",
       pfClockRevision,
       serialLatencyNs: msg.serialLatencyNs ?? null,
@@ -224,6 +229,45 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     }
     if (doc.channel === "FINISH") await addToGroup(armed, doc);
     return doc;
+  }
+
+  /**
+   * Pemicu photocell virtual dari agent. Hanya diterima bila ada sesi AKTIF
+   * dengan kamera yang sama (tidak membanjiri data saat orang lalu-lalang di
+   * luar heat). Masuk ke kelompok finish seperti impuls biasa sehingga memicu
+   * rekaman, tetapi TIDAK dipakai sebagai waktu resmi (lihat repairGroup).
+   */
+  async function ingestCameraTrigger(p: Principal, data: z.infer<typeof AgentTrigger>) {
+    const armed = await col.sessions.findOne({ armed: true, status: "open", cameraId: data.cameraId });
+    if (!armed) return { accepted: false };
+    const bootId = `camera:${data.cameraId}:${data.bootId}`;
+    if (await col.impulses.findOne({ bootId, seq: data.seq })) return { accepted: true };
+
+    const hostNs = toNs(data.agentNs) + toNs(data.agentOffsetNs);
+    const pf = await effectiveClock();
+    const deviceTimeNs = wrapDay(hostNs - toNs(pf.effectiveOffsetNs!));
+    const doc: ImpulseDoc = {
+      _id: new ObjectId(), sessionId: armed._id, groupId: null, bootId, seq: data.seq, channel: "FINISH",
+      deviceTime: formatClock(deviceTimeNs, 3), deviceTimeNs: deviceTimeNs.toString(), source: "camera",
+      timeBasis: "pf-clock", pfClockRevision: pf.revision, serialLatencyNs: null, hostNs: hostNs.toString(),
+      deviceOffsetNs: null, receivedAt: new Date(),
+    };
+    try {
+      await col.impulses.insertOne(doc);
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) return { accepted: true };
+      throw err;
+    }
+    await addToGroup(armed, doc);
+
+    // Tampilkan langsung di panel waktu sts-timingsystem: baris "Photo Finish"
+    // di tabel Registration Id/Racetime + isi Buffer-Timer-Finish.
+    bus.notifyTiming("photofinish:trigger", signPayload({
+      type: "photofinish:trigger" as const,
+      impulseId: doc._id.toHexString(), sessionId: armed._id.toHexString(), eventId: armed.eventId, bucket: armed.bucket,
+      raceCategory: armed.raceCategory, heatId: armed.heatId, cameraId: data.cameraId, time: doc.deviceTime,
+    }, cfg.PF_HMAC_SECRET));
+    return { accepted: true, impulseId: doc._id.toHexString() };
   }
 
   async function assignImpulse(p: Principal, impulseId: string, sessionId: string) {
@@ -345,6 +389,33 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     bus.toStaff("session:armed", { sessionId: armed ? id : null });
   }
 
+  /**
+   * Dari sts-timingsystem: sesi untuk heat yang sedang tampil dibuat (atau
+   * dipakai ulang bila heat yang sama sudah punya sesi terbuka) lalu diaktifkan.
+   */
+  async function sessionFromTiming(p: Principal, raw: unknown) {
+    if (!raw || typeof raw !== "object" || !verifyPayload(raw, cfg.PF_HMAC_SECRET)) throw new HttpError(401, "Tanda tangan HMAC tidak valid");
+    const req = TimingSessionRequest.parse(raw);
+    const existing = await col.sessions.findOne({
+      status: "open", eventId: req.eventId, raceCategory: req.raceCategory, heatId: req.heatId,
+      "bucket.divisionId": req.bucket.divisionId, "bucket.raceId": req.bucket.raceId, "bucket.initialId": req.bucket.initialId,
+    });
+    let session: SessionDoc;
+    if (existing) {
+      // Komposisi heat bisa berubah (mis. BYE/pengganti) — samakan dengan timing.
+      await col.sessions.updateOne({ _id: existing._id }, { $set: { label: req.label, lanes: req.lanes } });
+      await audit.append({ userId: p.sub, action: "session.sync-from-timing", entity: "session", entityId: existing._id.toHexString(), before: { label: existing.label, lanes: existing.lanes }, after: { label: req.label, lanes: req.lanes }, reason: null });
+      session = { ...existing, label: req.label, lanes: req.lanes };
+    } else {
+      session = await createSession(p, {
+        eventId: req.eventId, bucket: req.bucket, raceCategory: req.raceCategory, heatId: req.heatId,
+        label: req.label, lanes: req.lanes, cameraId: req.cameraId ?? "cam-1",
+      });
+    }
+    await armSession(p, session._id.toHexString(), true);
+    return { sessionId: session._id.toHexString(), label: session.label, created: !existing, lanes: session.lanes.length };
+  }
+
   async function closeSession(p: Principal, id: string) {
     const s = await getOpenSession(id);
     await col.sessions.updateOne({ _id: s._id }, { $set: { status: "closed", armed: false } });
@@ -392,6 +463,23 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       if (actual !== expected) throw new HttpError(400, `SHA-256 tidak cocok untuk ${rel}`);
     }
 
+    if (body.framesFile) {
+      // Indeks frame + setiap frame diverifikasi — frame utuh juga barang bukti.
+      let index;
+      try {
+        const full = resolveCapturePath(cfg.PF_CAPTURES_DIR, body.framesFile);
+        if ((await fileSha256(full)) !== body.framesSha256) throw new HttpError(400, `SHA-256 tidak cocok untuk ${body.framesFile}`);
+        index = await readFramesIndex(full);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        throw new HttpError(400, `Indeks frame tidak bisa dibaca: ${body.framesFile}`);
+      }
+      for (const f of index.frames) {
+        const actual = await fileSha256(resolveCapturePath(cfg.PF_CAPTURES_DIR, f.file)).catch(() => null);
+        if (actual !== f.sha256) throw new HttpError(400, `Frame rusak atau hilang: ${f.file}`);
+      }
+    }
+
     const { groupId: _g, ...rest } = body;
     const doc: CaptureDoc = { _id: new ObjectId(), sessionId: group.sessionId, groupId: group._id, ...rest, clock: group.clock, createdAt: new Date() };
     await col.captures.insertOne(doc);
@@ -399,6 +487,30 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     await audit.append({ userId: p.sub, action: "capture.create", entity: "capture", entityId: doc._id.toHexString(), before: null, after: { file: doc.file, sha256: doc.sha256, columnsSha256: doc.columnsSha256, clock: doc.clock }, reason: null });
     bus.toSession(group.sessionId.toHexString(), "capture:ready", serializeCapture(doc));
     return doc;
+  }
+
+  /**
+   * Frame utuh untuk tinjauan frame-demi-frame. Setiap frame dipetakan ke
+   * kolom slit-scan terdekat sehingga web bisa menampilkan foto pada detik
+   * yang sama dengan kolom yang sedang ditunjuk.
+   */
+  async function captureFrames(id: string) {
+    const capture = await col.captures.findOne({ _id: oid(id, "captureId") });
+    if (!capture) throw new HttpError(404, "Capture tidak ditemukan");
+    if (!capture.framesFile) return { frames: [], finishLine: null };
+    const [index, columns] = await Promise.all([
+      readFramesIndex(resolveCapturePath(cfg.PF_CAPTURES_DIR, capture.framesFile)),
+      readColumns(resolveCapturePath(cfg.PF_CAPTURES_DIR, capture.columnsFile)),
+    ]);
+    const colNs = columns.map((c) => toNs(c));
+    let j = 0;
+    const frames = index.frames.map((f) => {
+      const t = toNs(f.agentNs);
+      while (j + 1 < colNs.length && colNs[j + 1]! <= t) j++;
+      const nearest = j + 1 < colNs.length && colNs[j + 1]! - t < t - colNs[j]! ? j + 1 : j;
+      return { url: signFileUrl(cfg.PF_FILE_URL_SECRET, f.file), column: nearest };
+    });
+    return { frames, finishLine: index.finishLine };
   }
 
   async function frameAtColumn(captureId: string, column: number) {
@@ -449,6 +561,64 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     return col.crossings.findOne({ _id: doc._id });
   }
 
+  /**
+   * Hapus satu tangkapan (kelompok finish) — mis. pemicu palsu dari orang
+   * lewat, atau rekaman uji. Ditolak bila ada hasil yang sudah dikonfirmasi
+   * juri (barang bukti). Impuls RaceTime2 TIDAK hilang: dikembalikan ke
+   * daftar "tanpa sesi" agar bisa dipulihkan; pemicu kamera ikut dihapus.
+   */
+  async function deleteGroup(p: Principal, id: string) {
+    const group = await col.groups.findOne({ _id: oid(id, "groupId") });
+    if (!group) throw new HttpError(404, "Kelompok finish tidak ditemukan");
+    await getOpenSession(group.sessionId.toHexString());
+
+    const crossings = await col.crossings.find({ groupId: group._id }).toArray();
+    if (crossings.some((c) => c.revision > 0)) {
+      throw new HttpError(409, "Ada hasil yang sudah dikonfirmasi juri di tangkapan ini — tidak bisa dihapus (barang bukti)");
+    }
+    const [captures, impulses] = await Promise.all([
+      col.captures.find({ groupId: group._id }).toArray(),
+      col.impulses.find({ _id: { $in: group.impulseIds } }).toArray(),
+    ]);
+
+    // Hentikan ekstraksi tertunda untuk kelompok ini.
+    const key = group._id.toHexString();
+    clearTimeout(quietTimers.get(key));
+    quietTimers.delete(key);
+
+    await audit.append({
+      userId: p.sub, action: "group.delete", entity: "group", entityId: id,
+      before: {
+        sessionId: group.sessionId, impulses: impulses.map((i) => ({ id: i._id, source: i.source ?? "racetime", deviceTime: i.deviceTime })),
+        captures: captures.map((c) => ({ file: c.file, sha256: c.sha256, columnsSha256: c.columnsSha256, framesSha256: c.framesSha256 ?? null })),
+        crossings: crossings.map((c) => ({ rank: c.rank, lane: c.lane, column: c.column })),
+      },
+      after: null, reason: null,
+    });
+
+    const cameraIds = impulses.filter((i) => i.source === "camera").map((i) => i._id);
+    const racetimeIds = impulses.filter((i) => i.source !== "camera").map((i) => i._id);
+    await Promise.all([
+      col.crossings.deleteMany({ groupId: group._id }),
+      col.captures.deleteMany({ groupId: group._id }),
+      col.impulses.deleteMany({ _id: { $in: cameraIds } }),
+      col.impulses.updateMany({ _id: { $in: racetimeIds } }, { $set: { sessionId: null, groupId: null } }),
+      col.groups.deleteOne({ _id: group._id }),
+    ]);
+    for (const c of captures) {
+      for (const rel of [c.file, c.columnsFile, c.framesFile].filter((x): x is string => !!x)) {
+        await unlink(resolveCapturePath(cfg.PF_CAPTURES_DIR, rel)).catch(() => undefined);
+      }
+      if (c.framesFile) {
+        // folder <cam>-frames/ di samping indeks
+        const dir = resolveCapturePath(cfg.PF_CAPTURES_DIR, c.framesFile.replace(/\.json$/, ""));
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+    bus.toSession(group.sessionId.toHexString(), "group:deleted", { groupId: id });
+    return { deleted: true, racetimeImpulsesReturned: racetimeIds.length, cameraTriggersDeleted: cameraIds.length };
+  }
+
   async function deleteCrossing(p: Principal, id: string) {
     const c = await col.crossings.findOne({ _id: oid(id, "crossingId") });
     if (!c) throw new HttpError(404, "Crossing tidak ditemukan");
@@ -482,7 +652,8 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
 
     const { results, groupWarnings } = pairByOrder(
       crossings.map((c) => ({ id: c._id.toHexString(), rank: c.rank, cameraTimeNs: cameraTime(c) })),
-      impulses.map((i) => ({ id: i._id.toHexString(), deviceTimeNs: toNs(i.deviceTimeNs) })),
+      // Pemicu kamera hanya memicu rekaman — waktu resmi dari RaceTime2 atau kolom gambar.
+      impulses.filter((i) => i.source !== "camera").map((i) => ({ id: i._id.toHexString(), deviceTimeNs: toNs(i.deviceTimeNs) })),
     );
 
     const official: Array<{ crossingId: string; officialTime: string | null }> = [];
@@ -587,10 +758,15 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   }
 
   return {
-    updateClock, clockStatus, updateClockSettings, ingestImpulse, assignImpulse, resumePending, requestExtraction,
-    createSession, armSession, closeSession, sessionDetail,
-    addCapture, calibrate, markCrossing, deleteCrossing, confirmCrossing, redeliverPending,
+    updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger, assignImpulse, resumePending, requestExtraction,
+    createSession, sessionFromTiming, armSession, closeSession, sessionDetail,
+    addCapture, captureFrames, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,
+    /** Hentikan timer kelompok finish saat API dimatikan. */
+    shutdown: () => {
+      for (const t of quietTimers.values()) clearTimeout(t);
+      quietTimers.clear();
+    },
   };
 }
 

@@ -101,6 +101,10 @@ class ExtractResult:
     height: int
     from_agent_ns: int
     to_agent_ns: int
+    # Frame utuh untuk tinjauan frame-demi-frame (None bila arsip frame mati)
+    frames_file: str | None = None
+    frames_sha256: str | None = None
+    frame_count: int = 0
 
 
 def _sha256(path: Path) -> str:
@@ -123,6 +127,9 @@ def extract(
     camera_id: str,
     clock: ClockSnapshot | None = None,
     agent_offset_ns: int = 0,
+    frames: list[tuple[int, bytes]] | None = None,
+    frame_scale: float = 1.0,
+    finish_line: slitscan.FinishLine | None = None,
 ) -> ExtractResult:
     rel_dir = Path(_safe(session_id)) / _safe(group_id)
     ts, lines = ring.window(from_agent_ns, to_agent_ns)
@@ -161,7 +168,35 @@ def extract(
     }))
 
     duration_s = (int(ts[-1]) - int(ts[0])) / 1e9 if len(ts) > 1 else 0.0
+    frames_file = frames_sha = None
+    if frames:
+        # Frame utuh di sekitar pemicu: <cam>-frames/00001.jpg + indeks berisi
+        # waktu (jam agent) & SHA-256 tiap frame — diverifikasi API.
+        fdir = out_dir / f"{_safe(camera_id)}-frames"
+        fdir.mkdir(exist_ok=True)
+        entries = []
+        for i, (fts, jpeg) in enumerate(frames, start=1):
+            fpath = fdir / f"{i:05d}.jpg"
+            fpath.write_bytes(jpeg)
+            entries.append({"file": (rel_dir / fdir.name / fpath.name).as_posix(), "agentNs": str(int(fts)), "sha256": hashlib.sha256(jpeg).hexdigest()})
+        line = finish_line
+        index = out_dir / f"{_safe(camera_id)}-frames.json"
+        index.write_text(json.dumps({
+            "cameraId": camera_id,
+            "scale": frame_scale,
+            # garis finish dalam koordinat frame arsip (untuk overlay di web)
+            "finishLine": None if line is None else {
+                "x1": line.x1 * frame_scale, "y1": line.y1 * frame_scale, "x2": line.x2 * frame_scale, "y2": line.y2 * frame_scale,
+            },
+            "frames": entries,
+        }))
+        frames_file = (rel_dir / index.name).as_posix()
+        frames_sha = _sha256(index)
+
     return ExtractResult(
+        frames_file=frames_file,
+        frames_sha256=frames_sha,
+        frame_count=len(frames or []),
         file=(rel_dir / png.name).as_posix(),
         columns_file=(rel_dir / cols.name).as_posix(),
         sha256=_sha256(png),

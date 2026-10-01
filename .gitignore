@@ -16,3 +16,9 @@ __pycache__/
 # Hasil rekaman (bukti lomba — dikelola lewat backup, bukan git)
 data/captures/*
 !data/captures/.gitkeep
+
+# Video uji lokal (dibuat ulang, bukan bukti lomba)
+data/test-video/
+
+# Database MongoDB lokal (backup lewat mongodump, bukan git)
+data/mongo/

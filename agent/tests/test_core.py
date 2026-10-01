@@ -125,3 +125,34 @@ def test_cuplikan_standby_diperkecil_dan_berformat_jpeg():
 
     small = np.zeros((360, 640, 3), dtype=np.uint8)
     assert cv2.imdecode(np.frombuffer(encode_preview(small), np.uint8), cv2.IMREAD_COLOR).shape[:2] == (360, 640)
+
+
+def test_arsip_frame_utuh_dibatasi_fps_dan_ditulis_bersama_slitscan(tmp_path):
+    import hashlib
+    from pf_agent.frames import FrameArchive, FrameArchiveConfig
+
+    archive = FrameArchive(FrameArchiveConfig(max_fps=60, width=320, quality=80, seconds=5), camera_fps=240)
+    frames, _ = synthetic_race(n_frames=240)               # 1 detik @ 240 fps
+    coords = slitscan.line_coords(slitscan.FinishLine(60, 0, 60, 39), 120, 40)
+    ring = LineRing(capacity=500, line_len=len(coords[0]))
+    import time
+    for i, f in enumerate(frames):
+        ts = 1_000_000_000 + i * 4_166_667
+        ring.push(ts, slitscan.sample_line(f, coords))
+        archive.push(ts, f)
+        time.sleep(0.004)  # laju kamera sungguhan (240 fps)
+    archive.flush()
+    time.sleep(0.2)
+    kept = archive.window(0, 10**12)
+    assert 55 <= len(kept) <= 61, len(kept)                 # 240 fps → ±60 frame arsip
+    assert archive.scale == 1.0                              # 120 px < batas lebar 320
+
+    r = extract(ring, 1_000_000_000, 2_000_000_000, tmp_path, "s1", "g9", "cam-1",
+                frames=kept, frame_scale=archive.scale, finish_line=slitscan.FinishLine(60, 0, 60, 39))
+    assert r.frame_count == len(kept)
+    index = json.loads((tmp_path / r.frames_file).read_text())
+    assert index["finishLine"] == {"x1": 60.0, "y1": 0.0, "x2": 60.0, "y2": 39.0}
+    first = index["frames"][0]
+    assert first["file"] == "s1/g9/cam-1-frames/00001.jpg"
+    assert hashlib.sha256((tmp_path / first["file"]).read_bytes()).hexdigest() == first["sha256"]
+    archive.stop()

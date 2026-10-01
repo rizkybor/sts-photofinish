@@ -17,6 +17,8 @@ const Env = z.object({
   PF_FILE_URL_SECRET: z.string().min(32, "PF_FILE_URL_SECRET minimal 32 karakter"),
   PF_CORS_ORIGINS: z.string().default("http://localhost:5173"),
   PF_CAPTURES_DIR: z.string().default(path.join(repoRoot, "data/captures")),
+  /** Web app hasil `npm run build -w web`; disajikan API bila foldernya ada (mode production). */
+  PF_WEB_DIR: z.string().default(path.join(repoRoot, "web/dist")),
   PF_USER_TOKEN_TTL: z.string().default("8h"),
   /** Batas percobaan login per IP per 5 menit (anti tebak password). */
   PF_LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),

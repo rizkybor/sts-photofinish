@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ObjectId } from "mongodb";
@@ -121,6 +124,13 @@ export async function buildApp(cfg: Config, database: Database) {
   app.post("/api/captures", { preHandler: guard.require("device", "agent") }, async (req, reply) =>
     reply.code(201).send(await service.addCapture(req.principal!, CaptureCreate.parse(req.body))));
 
+  // ------------------------------------------------------------ tangkapan (kelompok finish)
+  app.get("/api/captures/:id/frames", { preHandler: guard.require("viewer") }, async (req) =>
+    service.captureFrames(IdParam.parse(req.params).id));
+
+  app.delete("/api/groups/:id", { preHandler: guard.require("operator") }, async (req) =>
+    service.deleteGroup(req.principal!, IdParam.parse(req.params).id));
+
   // ------------------------------------------------------------ crossing (juri)
   app.post("/api/crossings", { preHandler: guard.require("operator") }, async (req, reply) =>
     reply.code(201).send(await service.markCrossing(req.principal!, CrossingMark.parse(req.body))));
@@ -154,10 +164,25 @@ export async function buildApp(cfg: Config, database: Database) {
     return reply.header("content-type", type).header("content-length", size).header("cache-control", "private, max-age=600").send(stream);
   });
 
+  // ------------------------------------------------------------ web app (production)
+  // Satu alamat untuk semuanya: http://<ip-laptop>:4100 → web app + API + realtime.
+  if (existsSync(path.join(cfg.PF_WEB_DIR, "index.html"))) {
+    await app.register(fastifyStatic, { root: cfg.PF_WEB_DIR, wildcard: false, index: ["index.html"] });
+    app.setNotFoundHandler((req, reply) => {
+      const url = req.url.split("?")[0] ?? "";
+      if (req.method !== "GET" || url.startsWith("/api/") || url.startsWith("/files/")) {
+        return reply.code(404).send({ error: "Tidak ditemukan" });
+      }
+      return reply.sendFile("index.html"); // rute aplikasi (?session=…, ?standby)
+    });
+    app.log.info(`Web app disajikan dari ${cfg.PF_WEB_DIR}`);
+  }
+
   app.addHook("onReady", async () => {
     await service.resumePending();
   });
   app.addHook("onClose", async () => {
+    service.shutdown();
     realtime.io.close();
   });
 
