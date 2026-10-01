@@ -99,6 +99,15 @@ garis finish dan sejajar tiang photocell. Kamera USB3/GigE 120–240 fps,
 housing IP66, tudung + filter polarisasi (silau air). GigE/PoE bila kabel
 > 3 m. HP/GoPro hanya untuk video bukti, **bukan** sumber waktu resmi.
 
+**Standby kamera (cek kelurusan).** Menu *Standby kamera* (operator ke
+atas) menampilkan gambar live ±4 fps dari agent dengan lapisan: garis finish
+(`PF_FINISH_LINE`), **garis imajiner tegak lurus** yang bisa diklik ke posisi
+tiang photocell, garis datar, dan grid, ditambah kemiringan garis finish
+terhadap tegak lurus (≤0,5° lurus · ≤2° rapikan · >2° miring). Kamera
+dianggap lurus bila tiang photocell berimpit dengan garis imajiner dari
+atas sampai bawah. Cuplikan hanya dikirim selama ada yang membuka tampilan
+ini (room `preview:<cameraId>`), jadi tidak membebani perekaman.
+
 Saran pemasangan agar urutan tetap terbaca di H2H/RX (perahu dekat bisa
 menutupi perahu jauh): pasang kamera **setinggi mungkin di tepi** (tripod
 tinggi/tiang 2–3 m) dan sedikit menunduk, sehingga haluan perahu di

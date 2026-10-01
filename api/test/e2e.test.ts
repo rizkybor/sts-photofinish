@@ -27,7 +27,7 @@ const sockets: Socket[] = [];
 const cfg = () => loadConfig({
   NODE_ENV: "test", PF_PORT: "1", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_e2e",
   PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir,
-  PF_GROUP_QUIET_MS: "200",
+  PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000",
 });
 
 async function http<T = any>(method: string, url: string, token?: string, body?: unknown): Promise<{ status: number; data: T }> {
@@ -92,7 +92,7 @@ before(async () => {
   await app.listen({ host: "127.0.0.1", port: 0 });
   const addr = app.server.address();
   base = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
-  for (const [username, role] of [["op", "operator"], ["juri", "judge"], ["adm", "admin"]] as const) {
+  for (const [username, role] of [["op", "operator"], ["juri", "judge"], ["adm", "admin"], ["lihat", "viewer"]] as const) {
     await database.col.users.insertOne({
       _id: new ObjectId(), username, name: username, role, passwordHash: await hashPassword("rahasia-panjang"), disabled: false, createdAt: new Date(),
     });
@@ -332,4 +332,32 @@ test("frame RaceTime2 tanpa payload: waktu impuls dari jam PF, bucket ikut ke ti
   assert.equal(verified[0].raceCategory, "RX");
   agent.socket.close();
   timing.close();
+});
+
+test("standby kamera: cuplikan hanya untuk operator, agent nyala/mati sesuai penonton", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const agent = await socket(issueToken({ sub: "device:agent:p", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"));
+  const toggles: Array<{ cameraId: string; on: boolean }> = [];
+  agent.on("agent:preview", (m: { cameraId: string; on: boolean }) => toggles.push(m));
+
+  const viewer = await socket(await login("lihat"));
+  assert.equal((await viewer.emitWithAck("preview:subscribe", "cam-1")).ok, false, "viewer tidak boleh melihat kamera");
+
+  const op = await socket(await login("op"));
+  const frames: any[] = [];
+  op.on("preview:frame", (f: any) => frames.push(f));
+  assert.equal((await op.emitWithAck("preview:subscribe", "cam-1")).ok, true);
+  await until(() => toggles.some((t) => t.cameraId === "cam-1" && t.on));
+
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  agent.emit("agent:preview-frame", { cameraId: "cam-1", agentNs: "1", width: 1920, height: 1080, fps: 240, finishLine: { x1: 960, y1: 0, x2: 962, y2: 1079 }, jpeg });
+  agent.emit("agent:preview-frame", { cameraId: "cam-1", jpeg: "bukan-gambar" }); // ditolak diam-diam
+  await until(() => frames.length === 1);
+  assert.equal(frames[0].width, 1920);
+  assert.ok(Buffer.from(frames[0].jpeg).equals(jpeg));
+
+  op.close();
+  await until(() => toggles.at(-1)?.on === false);
+  viewer.close();
+  agent.close();
 });

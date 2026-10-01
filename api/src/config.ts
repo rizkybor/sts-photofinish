@@ -18,6 +18,8 @@ const Env = z.object({
   PF_CORS_ORIGINS: z.string().default("http://localhost:5173"),
   PF_CAPTURES_DIR: z.string().default(path.join(repoRoot, "data/captures")),
   PF_USER_TOKEN_TTL: z.string().default("8h"),
+  /** Batas percobaan login per IP per 5 menit (anti tebak password). */
+  PF_LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),
   PF_DEVICE_TOKEN_TTL: z.string().default("30d"),
   // Aturan FAJI: akurasi 1/100 detik. Cara pembulatan dikonfirmasi ke Chief Judge.
   PF_OFFICIAL_ROUNDING: z.enum(["truncate", "round"]).default("truncate"),
