@@ -1,0 +1,14 @@
+{
+  "name": "sts-photofinish",
+  "private": true,
+  "description": "STS Photo Finish — photo finish arung jeram & kayak, terhubung ke sts-timingsystem",
+  "workspaces": ["api", "web"],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w api && npm run build -w web",
+    "test": "npm test -w api",
+    "typecheck": "npm run typecheck -w api && npm run typecheck -w web"
+  },
+  "engines": { "node": ">=20" }
+}
