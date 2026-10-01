@@ -5,6 +5,7 @@ Photo finish berbasis web untuk lomba arung jeram & kayak FAJI, terhubung ke
 impuls RaceTime2 menentukan **waktu**. Fokus: H2H, Rafting Cross, DRR.
 
 - **Deploy & menjalankan (lokal / production): [docs/PANDUAN-DEPLOY.md](docs/PANDUAN-DEPLOY.md)**
+- Deploy ke VPS (domain + HTTPS, agent di lokasi): [docs/PANDUAN-VPS.md](docs/PANDUAN-VPS.md)
 - Arsitektur & keputusan desain: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Integrasi ke timing system: [docs/INTEGRATION-TIMING.md](docs/INTEGRATION-TIMING.md)
 

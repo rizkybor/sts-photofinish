@@ -25,6 +25,7 @@ class AgentConfig:
     frame_height: int | None
     trigger: TriggerConfig | None  # None = photocell virtual mati
     frames: FrameArchiveConfig | None  # None = arsip frame utuh mati
+    upload_captures: bool  # True = API di mesin lain (VPS): file rekaman diunggah lewat HTTP
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "AgentConfig":
@@ -57,4 +58,5 @@ class AgentConfig:
                 quality=int(e.get("PF_FRAMES_QUALITY", "85")),
                 seconds=float(e.get("PF_BUFFER_SECONDS", "20")),
             ) if e.get("PF_FRAMES", "on").lower() not in ("off", "0", "false") else None,
+            upload_captures=e.get("PF_UPLOAD_CAPTURES", "off").lower() in ("on", "1", "true"),
         )

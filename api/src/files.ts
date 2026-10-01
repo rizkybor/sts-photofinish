@@ -3,7 +3,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sha256Hex } from "./canonical.js";
 
@@ -66,4 +66,21 @@ export async function readFramesIndex(full: string): Promise<FramesIndex> {
     throw new Error("Indeks frame tidak valid");
   }
   return d;
+}
+
+/** Path rekaman yang boleh diunggah agent: <sessionId>/<groupId>/<nama file> (+ subfolder frame). */
+const UPLOAD_PATH = /^[0-9a-f]{24}\/[0-9a-f]{24}\/[A-Za-z0-9_-]+(-frames\/\d{5}\.jpg|-slit\.png|-columns\.json|-frames\.json)$/;
+
+/**
+ * Simpan file rekaman yang diunggah agent dari jarak jauh (mode VPS).
+ * Ditulis ke file sementara lalu di-rename, jadi tidak pernah ada file setengah jadi.
+ */
+export async function saveUploadedCapture(capturesDir: string, rel: string, data: Buffer): Promise<string> {
+  if (!UPLOAD_PATH.test(rel)) throw new Error(`Path unggahan tidak diizinkan: ${rel}`);
+  const full = resolveCapturePath(capturesDir, rel);
+  await mkdir(path.dirname(full), { recursive: true });
+  const tmp = `${full}.upload-${process.pid}-${Date.now()}`;
+  await writeFile(tmp, data);
+  await rename(tmp, full);
+  return sha256Hex(data);
 }
