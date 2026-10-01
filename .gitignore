@@ -22,3 +22,6 @@ data/test-video/
 
 # Database MongoDB lokal (backup lewat mongodump, bukan git)
 data/mongo/
+
+# Log uji lokal (scripts/dev-local.sh)
+data/logs/

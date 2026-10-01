@@ -1,129 +1,85 @@
-# Panduan Deploy & Menjalankan STS Photo Finish
+# Panduan Menggunakan STS Photo Finish
 
-Panduan ini untuk tim yang memasang dan mengoperasikan STS Photo Finish,
-baik **lokal** (uji coba di laptop pengembang) maupun **production** (hari
-lomba di lokasi). Cara memakai aplikasinya sendiri (sesi, tandai urutan,
-konfirmasi juri) ada di bagian 6.
+Panduan untuk tim yang memasang dan mengoperasikan STS Photo Finish bersama
+**sts-timingsystem**:
 
----
+- **A. Lokal**: menjalankan dan mencoba Photo Finish di satu laptop.
+- **B. Production**: hari lomba, di **B1. laptop lokasi (LAN)** atau **B2. VPS**,
+  beserta **B3. cara menggunakan saat lomba**.
 
-## 1. Gambaran deploy
-
-STS Photo Finish **tidak di-deploy ke internet**. Seluruh sistem berjalan di
-**satu laptop/mini-PC di lokasi lomba**, karena sungai sering tanpa sinyal dan
-jeda internet membuat waktu meleset. Perangkat lain (laptop timing, tablet
-juri, HP) tersambung lewat **Wi-Fi/hotspot lokal**.
-
-```
-                     LAPTOP PHOTO FINISH  (mis. 192.168.1.10)
- ┌──────────────────────────────────────────────────────────────────┐
- │  pf-mongo   MongoDB             127.0.0.1:27018 (lokal saja)     │
- │  pf-api     API + Web App + Realtime   :4100  ◀── semua perangkat│
- │  pf-agent   Capture Agent ◀── kamera (USB / iPhone / IP camera)  │
- └──────────────────────────────────────────────────────────────────┘
-        ▲ Wi-Fi/hotspot lokal                    ▲
-        │                                        │
- Laptop sts-timingsystem + RaceTime2      Tablet/HP juri & operator
- (PF_API_URL=http://192.168.1.10:4100)    (browser: http://192.168.1.10:4100)
-```
-
-| Mode | Untuk | Web app dibuka di | Cara menjalankan |
-|---|---|---|---|
-| **Lokal / dev** | Uji coba, pengembangan | `http://localhost:5173` | 4–5 terminal (`npm run dev:*`) |
-| **Production** | Hari lomba | `http://<ip-laptop>:4100` | 1 perintah: `npm run prod:start` (PM2) |
-
-sts-timingsystem boleh berjalan di laptop yang sama atau laptop lain di
-jaringan yang sama.
-
-Ingin server yang bisa diakses dari internet (demo, uji jarak jauh)? Lihat
-[PANDUAN-VPS.md](PANDUAN-VPS.md): API di VPS dengan HTTPS, agent kamera tetap di
-lokasi dan mengunggah rekaman (`PF_UPLOAD_CAPTURES=on`).
+Bagian **0. Persiapan** dikerjakan sekali per laptop dan berlaku untuk A dan B.
 
 ---
 
-## 2. Kebutuhan
+## 0. Persiapan (sekali per laptop)
 
-**Perangkat lunak** (laptop Photo Finish)
+### 0.1 Komponen
 
-| Komponen | Versi | Cek |
+| Komponen | Fungsi | Berjalan di |
+|---|---|---|
+| **API + web app** | Sesi, rekaman, konfirmasi juri, realtime | Laptop Photo Finish / VPS |
+| **Capture Agent** | Membaca kamera, photocell virtual, slit-scan & foto frame | **Selalu** di laptop yang tersambung ke kamera |
+| **Database** | MongoDB Atlas yang sama dengan sts-timingsystem (database `sts_photofinish`), atau MongoDB lokal | Atlas (internet) / laptop |
+| **sts-timingsystem** | RaceTime2, Finish Time, hasil resmi | Laptop timing |
+
+### 0.2 Perangkat lunak
+
+| | Versi | Cek |
 |---|---|---|
 | Node.js | ≥ 20 | `node -v` |
 | Python | ≥ 3.10 | `python3 -V` |
-| MongoDB Community | 7 atau 8 | `mongod --version` |
-| Git | — | `git --version` |
+| MongoDB (hanya bila memakai database lokal) | 7/8 | `mongod --version` |
 
-macOS: `brew install node python mongodb/brew/mongodb-community`.
+macOS: `brew install node python` (tambah `mongodb/brew/mongodb-community` bila perlu).
 
-**Perangkat keras**
-
-| | Uji coba | Lomba |
-|---|---|---|
-| Laptop | Apa saja | ≥ 8 GB RAM, SSD, **charger + power bank/power station** |
-| Kamera | Kamera laptop / iPhone (24–30 fps) | Kamera **120–240 fps** (USB3/GigE), tripod, housing tahan air |
-| Jaringan | Wi-Fi rumah | **Router/hotspot khusus** (WPA2), bukan Wi-Fi publik |
-
-Kamera 30 fps cukup untuk menguji alur, tetapi akurasi 1/100 detik di lomba
-membutuhkan kamera ≥ 120 fps.
-
----
-
-## 3. Persiapan pertama kali (lokal & production)
+### 0.3 Pasang aplikasi
 
 ```bash
-git clone <repo> ~/Sites/sts-photofinish
+git clone <URL_REPO> ~/Sites/sts-photofinish
 cd ~/Sites/sts-photofinish
 npm run setup
 ```
 
 `npm run setup` (aman dijalankan ulang):
 
-1. memeriksa Node, Python, MongoDB;
-2. memasang dependensi (`npm install` + virtualenv agent);
-3. membuat `.env` dengan **secret acak** bila belum ada (tidak menimpa yang lama);
-4. membuat folder `data/`;
-5. mem-build web app dan API.
+- memeriksa perangkat lunak,
+- memasang dependensi (Node + virtualenv agent),
+- membuat `.env` dengan **secret acak** (tidak menimpa `.env` yang sudah ada),
+- membuat folder `data/`,
+- mem-build aplikasi.
 
-### 3.1 Isi `.env`
+Semua perintah `npm run …` dijalankan dari **folder utama** `sts-photofinish`.
+Perintah agent (`.venv/bin/pf-agent`) dijalankan dari folder `agent/`.
 
-| Variabel | Isi | Keterangan |
-|---|---|---|
-| `PF_MONGO_URL` | `mongodb://127.0.0.1:27018` | Port 27018 dipakai MongoDB khusus Photo Finish |
-| `PF_JWT_SECRET`, `PF_HMAC_SECRET`, `PF_FILE_URL_SECRET` | (otomatis dari setup) | **Jangan dibagikan.** `PF_HMAC_SECRET` juga dipasang di sts-timingsystem |
-| `PF_DEVICE_TOKEN` | token agent (lihat 3.3) | |
-| `PF_CAMERA_SOURCE` | `0`, `1`, `http://…/video`, `rtsp://…`, atau path video | Lihat 3.2 |
-| `PF_CAMERA_FPS` | fps kamera | 30 untuk kamera laptop/iPhone |
-| `PF_FINISH_LINE` | `x1,y1,x2,y2` | Garis tegak di tengah: 1280×720 → `640,0,640,719`; 1920×1080 → `960,0,960,1079` |
-| `PF_TRIGGER` | `camera` / `off` | Photocell virtual (pemicu otomatis saat perahu lewat) |
-| `PF_TRIGGER_THRESHOLD`, `PF_TRIGGER_MIN_RUN` | 30, 0.06 | Naikkan bila riak/percikan ikut memicu |
-| `PF_OFFICIAL_ROUNDING` | `truncate` / `round` | Pembulatan 1/100 detik (konfirmasi Chief Judge) |
-| `PF_FRAMES` | `on` / `off` | Simpan foto frame utuh untuk panel **Foto frame** (tinjauan frame demi frame) |
-| `PF_FRAMES_FPS`, `PF_FRAMES_WIDTH` | 60, 1280 | Batas fps & lebar foto frame. Turunkan bila laptop berat atau RAM terbatas |
-| `PF_CORS_ORIGINS` | `http://localhost:5173` | Hanya untuk mode dev. Production tidak perlu diubah |
+### 0.4 Database (`.env`)
 
-### 3.1b Database: MongoDB yang sama dengan sts-timingsystem
-
-sts-timingsystem memakai **MongoDB Atlas** (cluster `mongo-jeko…`, database
-`sustainabledb_atlas`). Photo Finish dapat memakai **cluster dan akun Atlas
-yang sama** dengan **database terpisah** `sts_photofinish`, supaya koleksinya
-tidak tercampur dengan data timing dan tidak tersentuh fitur backup/reset timing.
+**Pilihan utama: MongoDB Atlas yang sama dengan sts-timingsystem.** Cluster
+dan akunnya sama, databasenya terpisah supaya data tidak tercampur.
 
 ```
-PF_MONGO_URL=<connection string Atlas yang sama dengan sts-timingsystem>
-PF_MONGO_DB=sts_photofinish        # atau sustainabledb_atlas bila ingin satu database
-PF_PM2_MONGO=off                   # tidak perlu MongoDB lokal
+PF_MONGO_URL=<connection string Atlas, sama dengan MONGO_URI di sts-timingsystem/app/.env>
+PF_MONGO_DB=sts_photofinish
+PF_PM2_MONGO=off
 ```
 
-Yang perlu diperhatikan:
+- Butuh **internet**. IP laptop/VPS harus diizinkan di **Atlas → Network Access**.
+- Connection string adalah **rahasia**: hanya di `.env`, jangan di-commit atau dikirim lewat chat.
+- Tulis **dengan tanda kutip** karena berisi `&`: `PF_MONGO_URL="mongodb://…&…"`.
 
-- **Butuh internet** di lokasi. Aturan ini sama dengan sts-timingsystem saat
-  memakai Atlas. Tanpa internet, gunakan MongoDB lokal (`mongodb://127.0.0.1:27018`).
-- **Atlas → Network Access**: izinkan IP laptop lokasi dan IP VPS.
-- Akun pengguna Photo Finish (`pf_users`) ada di database Photo Finish.
-  Setelah pindah database, buat ulang akun dengan `user:create`, atau salin dari database lama.
+**Alternatif tanpa internet: MongoDB lokal di laptop**
 
-### 3.2 Memilih kamera
+```
+PF_MONGO_URL=mongodb://127.0.0.1:27018
+PF_MONGO_DB=sts_photofinish
+PF_PM2_MONGO=on        # production: PM2 ikut menjalankan MongoDB (data/mongo)
+```
 
-Cari nomor kamera yang terpasang:
+Akun pengguna tersimpan di database yang dipakai. Setelah pindah database,
+buat ulang akun (0.6).
+
+### 0.5 Kamera (`.env`)
+
+Cari nomor kamera:
 
 ```bash
 cd agent && .venv/bin/python -c "
@@ -138,263 +94,313 @@ for i in range(4):
 "
 ```
 
-| Kamera | `PF_CAMERA_SOURCE` |
-|---|---|
-| Kamera USB / laptop | nomor dari skrip (`0`, `1`, …) |
-| **iPhone (Continuity Camera)**, biasanya 1920×1080 | nomornya dari skrip. Syarat: Apple ID sama, Wi-Fi + Bluetooth nyala, iPhone **landscape, diam, terkunci** |
-| HP lewat aplikasi kamera IP | alamat dari aplikasi, mis. `http://192.168.1.20:8080/video` atau `rtsp://…` |
-| Video uji (tanpa kamera) | path file, mis. `…/data/test-video/sungai-h2h.mp4` |
+| Kamera | `PF_CAMERA_SOURCE` | `PF_CAMERA_FPS` | `PF_FINISH_LINE` (garis tegak di tengah) |
+|---|---|---|---|
+| **iPhone (Continuity Camera)**, biasanya 1920×1080 | nomor dari skrip (mis. `0`) | 30 | `960,0,960,1079` |
+| Kamera laptop 1280×720 | nomor dari skrip (mis. `1`) | 30 | `640,0,640,719` |
+| Kamera USB/industri | nomornya | sesuai kamera (120–240) | sesuai resolusi |
+| HP lewat aplikasi kamera IP | `http://…/video` atau `rtsp://…` | 30 | sesuai resolusi |
+| Video uji (tanpa kamera) | `…/data/test-video/sungai-h2h.mp4` | 60 | `320,0,320,359` |
 
-macOS meminta **izin kamera** untuk aplikasi terminal pada percobaan
-pertama: **System Settings → Privacy & Security → Camera**. Aktifkan, lalu
-tutup dan buka lagi terminal.
+| Variabel | Default | Fungsi |
+|---|---|---|
+| `PF_TRIGGER` | `camera` | **Photocell virtual**: rekaman terpicu otomatis saat perahu menyentuh garis |
+| `PF_TRIGGER_THRESHOLD` / `PF_TRIGGER_MIN_RUN` | 30 / 0.06 | Naikkan bila riak atau bayangan ikut memicu; turunkan bila perahu terlewat |
+| `PF_FRAMES` | `on` | Simpan **foto frame** utuh (tinjauan frame demi frame) |
+| `PF_FRAMES_FPS` / `PF_FRAMES_WIDTH` | 60 / 1280 | Turunkan bila laptop berat atau koneksi lambat |
 
-Cek gambar dan garis finish:
+- **iPhone:** Apple ID sama dengan Mac, Wi-Fi + Bluetooth nyala, iPhone
+  **landscape, diam (tripod), terkunci**.
+- **Izin kamera macOS** untuk aplikasi terminal: **System Settings → Privacy &
+  Security → Camera**, lalu buka ulang terminal.
+
+Cek gambar & garis finish:
 
 ```bash
-cd agent && set -a && source ../.env && set +a && .venv/bin/pf-agent --preview
+cd agent && source ../scripts/lib-env.sh && load_env ../.env && .venv/bin/pf-agent --preview
 # buka data/captures/preview.png
 ```
 
-### 3.3 Akun & token perangkat
+### 0.6 Akun & token
 
-MongoDB harus sudah berjalan (`npm run prod:start`, atau terminal MongoDB di
-mode lokal).
+Database (0.4) harus bisa diakses.
 
 ```bash
-# akun pengguna (password diminta, minimal 10 karakter)
 npm run user:create -w api -- admin admin "Nama Admin"
 npm run user:create -w api -- operator1 operator "Nama Operator"
 npm run user:create -w api -- juri1 judge "Nama Juri"
 
-# token perangkat (tempel hasilnya)
-npm run token:device -w api -- agent "Kamera Finish"     # → PF_DEVICE_TOKEN di .env
-npm run token:device -w api -- timing "Laptop Timing"    # → konfigurasi sts-timingsystem (bagian 5)
+npm run token:device -w api -- agent "Kamera Finish"     # → PF_DEVICE_TOKEN di .env laptop kamera
+npm run token:device -w api -- timing "Laptop Timing"    # → konfigurasi sts-timingsystem (0.7)
 ```
 
 | Peran | Bisa |
 |---|---|
 | `viewer` | Melihat sesi & rekaman |
-| `operator` | Membuat/mengaktifkan sesi, Standby Kamera, kalibrasi kamera, menandai urutan |
+| `operator` | Sesi, Standby Kamera, kalibrasi kamera, tandai urutan, hapus tangkapan |
 | `judge` | + Konfirmasi/koreksi hasil (dikirim ke timing) |
-| `admin` | + Kalibrasi jam Photo Finish, cek audit log |
+| `admin` | + Kalibrasi jam Photo Finish, audit log |
 
-Token berlaku 30 hari (`PF_DEVICE_TOKEN_TTL`). Buat ulang sebelum event bila
-sudah lewat.
+Token perangkat berlaku 30 hari. Buat ulang sebelum event bila sudah lewat.
 
----
+### 0.7 sts-timingsystem
 
-## 4. Menjalankan
-
-### 4.1 Mode LOKAL (uji coba / pengembangan)
-
-Buka satu terminal untuk masing-masing komponen dan **biarkan tetap terbuka**:
-
-| # | Komponen | Perintah (dari folder `sts-photofinish`) |
-|---|---|---|
-| 1 | MongoDB | `mongod --dbpath ~/pf-mongo-data --port 27018 --bind_ip 127.0.0.1` |
-| 2 | API | `npm run dev:api` |
-| 3 | Web | `npm run dev:web` → **http://localhost:5173** |
-| 4 | Agent kamera | `cd agent && set -a && source ../.env && set +a && .venv/bin/pf-agent -v` |
-| 5 | Simulator RaceTime2 (opsional) | `npm run sim:timing -w api` (Enter = 1 perahu, `2` = H2H, `4` = RX) |
-
-Aturan penting:
-
-- Perintah `npm run …` dijalankan dari **folder utama** (`sts-photofinish`),
-  bukan dari `agent/`.
-- **Satu kamera = satu agent.** Sebelum menjalankan agent baru, hentikan
-  yang lama (Ctrl+C). Agent kedua dengan kamera sama ditolak otomatis.
-- Setelah mengubah `.env`, restart komponen yang memakainya (agent dan/atau API).
-
-### 4.2 Mode PRODUCTION (hari lomba)
-
-```bash
-cd ~/Sites/sts-photofinish
-npm run build        # setiap kali kode diperbarui
-npm run prod:start   # MongoDB + API/web + agent kamera, sekaligus
-```
-
-Buka di laptop ini atau perangkat mana pun di jaringan yang sama:
+Gunakan branch timing yang berisi integrasi Photo Finish. Isi
+`sts-timingsystem/app/.env` (salin dari `app/.env.example`):
 
 ```
-http://<ip-laptop-photofinish>:4100
-```
-
-Cari IP laptop: `ipconfig getifaddr en0` (macOS).
-
-| Perintah | Fungsi |
-|---|---|
-| `npm run prod:status` | Status ketiga proses (`online` = jalan) |
-| `npm run prod:logs` | Log langsung (Ctrl+C untuk keluar) |
-| `npm run prod:restart` | Restart semua (setelah ubah `.env`) |
-| `npm run prod:stop` | Hentikan semua |
-| `npm run prod:delete` | Hapus dari daftar PM2 |
-| `npx pm2 restart pf-agent` | Restart satu komponen saja |
-
-PM2 otomatis menyalakan ulang komponen yang mati (kamera tercabut, crash),
-dan log tersimpan di `~/.pm2/logs/`.
-
-**Variasi:**
-
-- MongoDB sudah berjalan di tempat lain (mis. service sendiri): tambahkan
-  `PF_PM2_MONGO=off` di `.env`.
-- Kamera dipasang di **mesin lain** (mis. mini-PC di tepi garis finish): di
-  laptop utama set `PF_PM2_AGENT=off`. Di mesin kamera, jalankan
-  `scripts/run-agent.sh` dengan `PF_API_URL=http://<ip-laptop-utama>:4100`.
-  Kamera berbeda perlu `PF_CAMERA_ID` berbeda (`cam-1`, `cam-2`).
-- **Port 27018 sudah terpakai** oleh MongoDB yang Anda jalankan manual
-  (mode lokal): hentikan dulu sebelum `prod:start`.
-
-**Menyala otomatis saat laptop dinyalakan** (opsional):
-
-```bash
-npm run prod:start
-npx pm2 save
-npx pm2 startup      # ikuti perintah sudo yang ditampilkan
-```
-
-### 4.3 Jaringan di lokasi
-
-1. Gunakan **router/hotspot khusus** dengan password WPA2/WPA3. Jangan
-   memakai Wi-Fi publik.
-2. Beri laptop Photo Finish **IP tetap** (DHCP reservation di router), agar
-   alamat `http://<ip>:4100` tidak berubah di tengah lomba.
-3. Saat pertama kali dibuka, macOS menanyakan **firewall** untuk Node.
-   Pilih **Allow**. Bila tablet tidak bisa membuka: **System Settings →
-   Network → Firewall → Options**, lalu izinkan `node`.
-4. Uji dari tablet juri: buka `http://<ip>:4100` dan login.
-
----
-
-## 5. Menghubungkan sts-timingsystem
-
-Gunakan branch sts-timingsystem yang sudah berisi integrasi Photo Finish.
-
-**Mode dev** (`yarn electron:serve`): tambahkan ke `sts-timingsystem/app/.env`
-
-```
-PF_API_URL=http://<ip-laptop-photofinish>:4100
-PF_DEVICE_TOKEN=<token timing dari bagian 3.3>
+MONGO_URI=<connection string Atlas>          # wajib — tidak lagi ditulis di kode
+PF_API_URL=http://127.0.0.1:4100             # alamat API Photo Finish (lihat A / B)
+PF_DEVICE_TOKEN=<token timing dari 0.6>
 PF_HMAC_SECRET=<sama persis dengan PF_HMAC_SECRET di .env Photo Finish>
 ```
 
-Di mode lokal dengan semuanya di satu laptop: `PF_API_URL=http://127.0.0.1:4100`.
-
-**Aplikasi terpasang** (hasil `yarn electron:build`): buat file
-`photofinish.json` di folder data aplikasi.
-macOS: `~/Library/Application Support/STiming System 424/photofinish.json`
-
-```json
-{ "apiUrl": "http://192.168.1.10:4100", "deviceToken": "<token timing>", "hmacSecret": "<PF_HMAC_SECRET>" }
-```
-
-Restart aplikasi timing. Di halaman H2H/RX/DRR akan muncul badge **"Photo
-Finish terhubung"** dan tombol **Kirim heat ke Photo Finish**.
-
-Tanpa konfigurasi ini, sts-timingsystem berjalan seperti biasa tanpa Photo Finish.
+- **Aplikasi timing terpasang** (installer) membaca `photofinish.json` di folder
+  data aplikasi (macOS: `~/Library/Application Support/STiming System 424/`):
+  ```json
+  { "apiUrl": "http://192.168.1.10:4100", "deviceToken": "<token timing>", "hmacSecret": "<PF_HMAC_SECRET>" }
+  ```
+- Installer timing harus di-build di mesin yang `app/.env`-nya berisi `MONGO_URI`.
+- Tanpa konfigurasi Photo Finish, timing berjalan seperti biasa.
 
 ---
 
-## 6. Prosedur hari lomba
+## A. LOKAL: menjalankan & mencoba di satu laptop
 
-### Sebelum heat pertama
+Semua komponen di satu laptop, web dibuka di **http://localhost:5173**.
 
-| # | Siapa | Langkah |
-|---|---|---|
-| 1 | Teknisi | `npm run prod:start`, lalu `npm run prod:status`: ketiganya `online` |
-| 2 | Admin | Login, klik **jam di navbar** → **Set ke waktu** sesuai layar RaceTime2, lalu rapikan dengan **Trim** |
-| 3 | Operator | **Standby Kamera**: klik gambar di tiang photocell. Tiang harus berimpit dengan garis biru dan indikator **hijau** |
-| 4 | Operator timing | sts-timingsystem: buka halaman lomba, pastikan badge **terhubung**, lalu **Connect Racetime** |
-
-### Setiap heat
-
-| # | Siapa | Langkah |
-|---|---|---|
-| 1 | Operator timing | **Kirim heat ke Photo Finish**, pilih heat, lalu **Kirim & aktifkan** |
-| 2 | — | Perahu melintas. **Photocell virtual** memicu rekaman otomatis, dan baris `Photo Finish` + Buffer-Timer-Finish muncul di timing |
-| 3 | Operator PF | Pilih lintasan, lalu klik **haluan** tiap perahu sesuai urutan tiba (kiri = lebih dulu) |
-| 4 | Operator PF | Heat pertama saja: **Kalibrasi kamera** (butuh impuls RaceTime2) |
-| 5 | Juri | **Konfirmasi** setiap perahu: jumlah awak, posisi perahu, melintas 2× |
-| 6 | — | **Finish Time terisi otomatis** di sts-timingsystem. Penalti finish yang dicatat juri diterapkan operator timing |
-
-### Setelah lomba: backup
-
-```bash
-STAMP=$(date +%Y%m%d)
-mongodump --uri "mongodb://127.0.0.1:27018/sts_photofinish" --out ~/Backup-PF/$STAMP/db
-cp -R data/captures ~/Backup-PF/$STAMP/captures
-npm run prod:stop
-```
-
-Rekaman (`data/captures`) dan audit log adalah **barang bukti protes**.
-Simpan backup minimal sampai masa protes selesai, lalu hapus frame mentah
-sesuai kebijakan privasi (UU PDP).
-
----
-
-## 7. Memperbarui versi
+### A.1 Menjalankan: satu perintah
 
 ```bash
 cd ~/Sites/sts-photofinish
-npm run prod:stop
+npm run dev:local
+```
+
+Skrip `scripts/dev-local.sh` menjalankan semuanya secara berurutan dan
+menunggu sampai tiap komponen benar-benar siap:
+
+| # | Komponen | Keterangan |
+|---|---|---|
+| 1 | Persiapan | Cek `.env`, dependensi Node, virtualenv agent (dipasang otomatis bila belum ada) |
+| 2 | Database | **Atlas**: langsung dipakai. **MongoDB lokal**: dinyalakan bila belum jalan (`~/pf-mongo-data`) |
+| 3 | API | `:4100`. Bila database belum punya akun, skrip menawarkan membuat akun **admin** |
+| 4 | Web | **http://localhost:5173** (alamat untuk tablet/HP di jaringan yang sama ikut ditampilkan) |
+| 5 | Agent kamera | Token dibuat otomatis bila `PF_DEVICE_TOKEN` kosong. Dilewati bila agent lain sudah berjalan |
+
+- Komponen yang **sudah berjalan dipakai ulang**, tidak dijalankan dobel.
+- **Ctrl+C** menghentikan semua yang dinyalakan skrip ini.
+- Log ada di `data/logs/` (api.log, web.log, agent.log).
+- Tanpa agent kamera: `npm run dev:local -- --no-agent`.
+
+Jalankan **terpisah** bila perlu (di terminal lain):
+
+| Komponen | Perintah | Tanda siap |
+|---|---|---|
+| sts-timingsystem | `cd ~/Sites/sts-timingsystem/app && yarn electron:serve` | badge **"Photo Finish terhubung"** di halaman H2H/RX/DRR |
+| Simulator RaceTime2 (tanpa alat) | `npm run sim:timing -w api` | `[sim] terhubung …` |
+
+Bila ingin menjalankan per komponen secara manual: `npm run dev:api`,
+`npm run dev:web`, dan agent dengan
+`cd agent && source ../scripts/lib-env.sh && load_env ../.env && .venv/bin/pf-agent -v`.
+
+### A.2 Cara menggunakan (uji coba)
+
+1. **Login** `admin` di http://localhost:5173.
+2. **Jam Photo Finish:** klik jam di navbar → **Set ke waktu** (jam sekarang / layar RaceTime2).
+3. **Standby Kamera:** gambar live tampil. Klik gambar di tiang/penanda finish,
+   lalu cek indikator kelurusan **hijau**.
+4. **Siapkan heat:** di sts-timingsystem buka halaman H2H → **Kirim heat ke
+   Photo Finish** → pilih heat → **Kirim & aktifkan**.
+   Tanpa timing: **Sesi Lomba → Sesi baru → Aktifkan**.
+5. **Picu finish:** lewatkan benda (tangan, buku) melewati **garis tengah kamera**.
+   - Photo Finish: **kelompok finish** baru muncul otomatis. Sekitar 3 detik
+     kemudian, gambar **slit-scan** dan **foto frame** tampil.
+   - Timing: baris **`Photo Finish`** muncul di tabel waktu, **Buffer-Timer-Finish** terisi.
+   - Dengan simulator: ketik `2` + Enter (dua perahu H2H).
+6. **Tandai urutan:** pilih lintasan **A** → klik ujung haluan di slit-scan.
+   Pilih **B** → klik haluan berikutnya. Kiri = lebih dulu. Arahkan kursor ke
+   slit-scan atau pakai ◀ ▶ untuk melihat **foto frame**.
+7. **Konfirmasi juri:** login `juri1` di tab lain → **Konfirmasi** → isi jumlah
+   awak → **Konfirmasi hasil**.
+8. **Hasil di timing:** Finish Time tim terisi otomatis di halaman H2H.
+9. **Bersihkan data uji:** tombol **Hapus** di setiap kelompok finish.
+
+### A.3 Aturan penting saat uji
+
+- **Satu kamera = satu agent.** Hentikan agent lama (Ctrl+C) sebelum menjalankan
+  yang baru. Agent kedua dengan kamera sama ditolak otomatis.
+- Setelah mengubah `.env`, restart komponen yang memakainya (API dan/atau agent).
+- Kamera laptop/iPhone (24–30 fps) cukup untuk menguji alur, tetapi bukan
+  akurasi 1/100 detik. Cahaya terang membuat gambar lebih tajam.
+
+---
+
+## B. PRODUCTION: hari lomba
+
+| | **B1. Laptop di lokasi (LAN)** | **B2. VPS** |
+|---|---|---|
+| Server | Laptop/mini-PC di lokasi | VPS + domain + HTTPS |
+| Dibuka di | `http://<ip-laptop>:4100` | `https://pf.domain-anda.id` |
+| Agent kamera | Laptop yang sama | Laptop lokasi, mengunggah rekaman ke VPS |
+| Internet | Hanya bila memakai Atlas | **Wajib** |
+| Presisi waktu | **Terbaik** (jeda LAN kecil & stabil) | Lebih rendah (jeda internet) |
+| Cocok untuk | **Lomba resmi** | Demo, uji jarak jauh |
+
+### B1. Laptop di lokasi (LAN), disarankan untuk lomba
+
+**1. Build & jalankan (satu perintah)**
+
+```bash
+cd ~/Sites/sts-photofinish
+npm run build
+npm run prod:start      # API + web + agent kamera (+ MongoDB lokal bila PF_PM2_MONGO=on)
+npm run prod:status     # semua "online"
+```
+
+Buka `http://<ip-laptop>:4100` dari laptop ini, tablet juri, atau HP. Cari IP
+laptop dengan `ipconfig getifaddr en0`.
+
+| Perintah | Fungsi |
+|---|---|
+| `npm run prod:status` | Status proses |
+| `npm run prod:logs` | Log langsung (Ctrl+C keluar) |
+| `npm run prod:restart` | Restart semua (setelah ubah `.env`) |
+| `npm run prod:stop` | Hentikan semua |
+| `npx pm2 restart pf-agent` | Restart agent saja |
+
+PM2 menyalakan ulang komponen yang mati. Untuk menyala otomatis saat laptop
+dinyalakan: `npx pm2 save && npx pm2 startup` (ikuti perintah sudo yang ditampilkan).
+
+**2. Jaringan lokasi**
+
+- **Router/hotspot khusus** dengan password WPA2/WPA3, bukan Wi-Fi publik.
+- **IP tetap** untuk laptop Photo Finish (DHCP reservation).
+- Saat ditanya firewall macOS, izinkan **node**.
+- Memakai Atlas: router harus punya internet. Tanpa internet: MongoDB lokal (0.4).
+
+**3. Laptop timing:** `PF_API_URL=http://<ip-laptop-photofinish>:4100` (0.7).
+
+**Variasi**
+
+- **Kamera di mesin lain** (mis. mini-PC di tepi garis finish): di laptop utama
+  `PF_PM2_AGENT=off`. Di mesin kamera, jalankan agent dengan
+  `PF_API_URL=http://<ip-laptop-utama>:4100`. Kamera berbeda butuh `PF_CAMERA_ID` berbeda.
+- **Port 27018 sudah dipakai** MongoDB yang dijalankan manual: hentikan dulu,
+  atau set `PF_PM2_MONGO=off`.
+
+### B2. VPS (domain + HTTPS)
+
+Langkah lengkap ada di **[PANDUAN-VPS.md](PANDUAN-VPS.md)**. Ringkasnya:
+
+1. VPS Ubuntu 24.04, record DNS **A** → IP VPS.
+2. Pasang Node 22, Nginx, Certbot (MongoDB tidak perlu bila memakai **Atlas**).
+3. `git clone` → `npm install` → `npm run build`.
+4. `.env` VPS: secret acak, `PF_HOST=127.0.0.1`, `PF_TRUST_PROXY=true`,
+   `PF_MONGO_URL=<Atlas>`, `PF_MONGO_DB=sts_photofinish`, `PF_PM2_MONGO=off`, `PF_PM2_AGENT=off`.
+5. `npm run prod:start` → `npx pm2 save` → `npx pm2 startup`.
+6. Nginx dari `deploy/nginx-photofinish.conf` → `certbot --nginx`.
+7. **Atlas → Network Access**: tambahkan IP VPS.
+8. **Laptop kamera di lokasi:** `PF_API_URL=https://pf.domain-anda.id`,
+   `PF_UPLOAD_CAPTURES=on`, lalu jalankan agent.
+9. **Laptop timing:** `PF_API_URL=https://pf.domain-anda.id`.
+
+### B3. Cara menggunakan saat lomba (B1 & B2)
+
+**Sebelum heat pertama**
+
+| # | Siapa | Langkah |
+|---|---|---|
+| 1 | Teknisi | Server jalan (`npm run prod:status`), agent kamera **terhubung** |
+| 2 | Admin | **Jam navbar → Set ke waktu** sesuai layar RaceTime2, rapikan dengan **Trim** |
+| 3 | Operator | **Standby Kamera**: tiang photocell berimpit dengan garis biru tegak lurus, indikator **hijau** |
+| 4 | Operator timing | Halaman lomba: badge **"Photo Finish terhubung"** → **Connect Racetime** |
+
+**Setiap heat**
+
+| # | Siapa | Langkah |
+|---|---|---|
+| 1 | Operator timing | **Kirim heat ke Photo Finish** → pilih heat → **Kirim & aktifkan** |
+| 2 | — | Perahu melintas: rekaman terpicu otomatis. Di timing muncul baris `Photo Finish` + Buffer-Timer-Finish |
+| 3 | Operator PF | Pilih lintasan → klik **haluan** tiap perahu sesuai urutan tiba. Finish tipis: periksa **Foto frame** (◀ ▶) |
+| 4 | Operator PF | Heat pertama saja: **Kalibrasi kamera** (butuh impuls RaceTime2) |
+| 5 | Juri | **Konfirmasi** tiap perahu: jumlah awak, posisi perahu, melintas 2× |
+| 6 | — | **Finish Time terisi otomatis** di timing. Penalti finish yang dicatat juri diterapkan operator timing |
+| 7 | Operator PF | Tangkapan palsu (orang lewat) → **Hapus**. Yang sudah dikonfirmasi juri tidak bisa dihapus |
+
+**Setelah lomba: backup**
+
+```bash
+STAMP=$(date +%Y%m%d)
+mongodump --uri "$(grep ^PF_MONGO_URL= .env | cut -d= -f2-)" --db sts_photofinish --out ~/Backup-PF/$STAMP/db
+cp -R data/captures ~/Backup-PF/$STAMP/captures
+```
+
+Rekaman dan audit log adalah **barang bukti protes**. Simpan sampai masa
+protes selesai, lalu hapus frame mentah sesuai kebijakan privasi (UU PDP).
+
+---
+
+## C. Memperbarui versi
+
+```bash
+cd ~/Sites/sts-photofinish
+npm run prod:stop        # production saja
 git pull
-npm run setup          # pasang dependensi baru + build; .env tidak diubah
-npm run prod:start
+npm run setup            # dependensi baru + build; .env tidak diubah
+npm run prod:start       # production saja
 ```
 
 Jangan memperbarui di tengah hari lomba.
 
 ---
 
-## 8. Keamanan
+## D. Keamanan
 
-- `.env` berisi secret: **jangan di-commit, jangan dikirim lewat chat**.
-  `.env` sudah ada di `.gitignore`.
-- Ganti semua password akun uji (`uji-lokal-…`) dengan password baru
-  untuk event sungguhan.
-- MongoDB hanya mendengarkan `127.0.0.1`, jadi tidak bisa diakses dari jaringan.
-- Pesan timing ↔ Photo Finish ditandatangani HMAC. Bila `PF_HMAC_SECRET`
-  berbeda di kedua sisi, impuls dan hasil ditolak.
-- Rekaman hanya bisa dibuka lewat aplikasi (URL bertanda tangan, berlaku 15 menit).
-- Periksa keutuhan audit log (admin): `GET /api/audit/verify`.
+- `.env` (Photo Finish) dan `app/.env` (timing) berisi rahasia: **jangan di-commit, jangan dibagikan**.
+- Connection string Atlas hanya di `.env`, tidak lagi di kode sumber timing.
+- Ganti password akun uji (`uji-lokal-…`) sebelum event sungguhan. Buat akun per orang.
+- `PF_HMAC_SECRET` harus sama di Photo Finish dan timing (pesan ditandatangani HMAC).
+- Rekaman hanya bisa dibuka lewat aplikasi (URL bertanda tangan, 15 menit).
+- VPS: wajib HTTPS, firewall 22/80/443 (PANDUAN-VPS.md).
 
 ---
 
-## 9. Mengatasi masalah
+## E. Mengatasi masalah
 
 | Gejala | Penyebab & solusi |
 |---|---|
-| Browser: **HTTP 500** saat login (mode dev) | API (4100) atau MongoDB mati. Cek terminal API/MongoDB |
-| `prod:status`: `pf-api` **errored** | Belum di-build (`npm run build`), atau MongoDB belum siap. Lihat `npm run prod:logs` |
-| `pf-mongo` errored, "address already in use" | Port 27018 dipakai MongoDB lain. Hentikan, atau set `PF_PM2_MONGO=off` |
-| "Capture Agent belum terhubung" | Agent mati, kamera tidak bisa dibuka, atau `PF_DEVICE_TOKEN` salah. Lihat log agent |
-| `Gagal membaca frame dari kamera` | Izin kamera terminal belum aktif, kamera dipakai aplikasi lain, atau nomor kamera salah (bagian 3.2) |
-| Gambar Standby **berkedip** | Ada dua agent untuk kamera yang sama. Sisakan satu |
-| Agent: "Kamera cam-1 sudah dipakai agent lain" | Hentikan agent lama, atau beri `PF_CAMERA_ID` berbeda |
-| Pemicu kamera terlalu sering | Naikkan `PF_TRIGGER_THRESHOLD` / `PF_TRIGGER_MIN_RUN`, restart agent |
-| Perahu lewat tapi tidak memicu | Turunkan nilai di atas. Pastikan sesi **AKTIF** |
-| Timing: badge "Photo Finish terputus" | API mati, `PF_API_URL` salah, atau firewall. Impuls tetap antre dan terkirim setelah tersambung |
+| Browser **HTTP 500** saat login (lokal) | API (4100) mati, atau database tidak bisa diakses. Cek terminal API |
+| API gagal start, error koneksi MongoDB | Atlas: internet / Network Access. Lokal: `mongod` 27018 belum jalan |
+| `npm error No workspaces found` | Perintah dijalankan dari `agent/`. Pindah ke folder utama |
+| "Capture Agent belum terhubung" | Agent mati, kamera tidak terbuka, atau `PF_DEVICE_TOKEN` salah. Lihat terminal/log agent |
+| `Gagal membaca frame dari kamera` | Izin kamera, kamera dipakai aplikasi lain, atau nomor kamera salah (0.5) |
+| Gambar Standby **berkedip** | Dua agent untuk kamera yang sama. Sisakan satu |
+| Pemicu terlalu sering / tidak memicu | Atur `PF_TRIGGER_THRESHOLD` / `PF_TRIGGER_MIN_RUN`, restart agent. Pastikan sesi **AKTIF** |
+| Foto frame "tidak menyimpan frame utuh" | Rekaman lama, atau `PF_FRAMES=off` |
+| Timing: "Photo Finish terputus" | API mati, `PF_API_URL` salah, atau firewall. Impuls tetap antre |
 | Timing: "… hasil menunggu" | Buka kategori & heat yang sama dengan sesi Photo Finish |
-| Tablet tidak bisa membuka `http://<ip>:4100` | Beda jaringan, atau firewall macOS memblokir `node` |
-| Jam navbar "Belum kalibrasi" | Admin belum melakukan **Set ke waktu** |
+| Timing tidak bisa membuka database | `MONGO_URI` belum ada di `app/.env` (atau installer di-build tanpa `MONGO_URI`) |
+| Tablet tidak bisa membuka `http://<ip>:4100` | Beda jaringan, atau firewall macOS memblokir node |
+| Jam navbar "Belum kalibrasi" | Admin belum **Set ke waktu** |
 
 ---
 
-## 10. Ringkasan perintah
+## F. Ringkasan perintah
 
 ```bash
-# sekali
+# persiapan (sekali)
 npm run setup
 npm run user:create -w api -- <username> <admin|judge|operator|viewer> "<Nama>"
 npm run token:device -w api -- <agent|timing> "<nama perangkat>"
 
-# lokal
-npm run dev:api            # API (4100)
-npm run dev:web            # Web (5173)
-npm run sim:timing -w api  # simulator RaceTime2
-cd agent && set -a && source ../.env && set +a && .venv/bin/pf-agent -v
+# A. lokal
+npm run dev:local                   # semua sekaligus (Ctrl+C untuk berhenti)
+npm run dev:api                     # atau per komponen: API :4100
+npm run dev:web                     # Web :5173
+cd agent && source ../scripts/lib-env.sh && load_env ../.env && .venv/bin/pf-agent -v
+npm run sim:timing -w api           # simulator RaceTime2 (opsional)
 
-# production
+# B. production (laptop lokasi / VPS)
 npm run build && npm run prod:start
 npm run prod:status | prod:logs | prod:restart | prod:stop
 

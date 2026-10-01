@@ -10,7 +10,7 @@ function readEnv() {
   try {
     for (const line of fs.readFileSync(path.join(__dirname, ".env"), "utf8").split("\n")) {
       const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
-      if (m) env[m[1]] = m[2];
+      if (m) env[m[1]] = m[2].replace(/^(["'])(.*)\1\s*$/, "$2"); // buang tanda kutip
     }
   } catch {
     /* .env belum ada — scripts/setup.sh membuatnya */

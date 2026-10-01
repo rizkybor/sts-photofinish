@@ -3,5 +3,5 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/agent"
-set -a; source "$ROOT/.env"; set +a
+source "$ROOT/scripts/lib-env.sh"; load_env "$ROOT/.env"
 exec .venv/bin/pf-agent

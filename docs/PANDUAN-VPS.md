@@ -197,14 +197,14 @@ Gunakan password kuat (≥ 12 karakter), karena server ini bisa diakses dari int
 
 ### 8.1 Laptop kamera (agent)
 
-Di laptop lokasi, siapkan repo seperti [PANDUAN-DEPLOY.md §3](PANDUAN-DEPLOY.md),
+Di laptop lokasi, siapkan repo seperti [PANDUAN-DEPLOY.md bagian 0](PANDUAN-DEPLOY.md),
 lalu ubah `.env` laptop tersebut:
 
 ```
 PF_API_URL=https://pf.domain-anda.id
 PF_DEVICE_TOKEN=<token agent dari VPS>
 PF_UPLOAD_CAPTURES=on              # rekaman diunggah ke VPS
-PF_CAMERA_SOURCE=0                 # sesuaikan kamera (PANDUAN-DEPLOY §3.2)
+PF_CAMERA_SOURCE=0                 # sesuaikan kamera (PANDUAN-DEPLOY bagian 0.5)
 PF_CAMERA_FPS=30
 PF_FINISH_LINE=960,0,960,1079
 PF_TRIGGER=camera
@@ -217,7 +217,7 @@ Jalankan **hanya agent** (laptop ini tidak menjalankan API/MongoDB):
 
 ```bash
 cd ~/Sites/sts-photofinish/agent
-set -a && source ../.env && set +a
+source ../scripts/lib-env.sh && load_env ../.env
 .venv/bin/pf-agent -v
 ```
 
@@ -228,7 +228,7 @@ tersimpan di laptop (`data/captures`) sebagai cadangan.
 ### 8.2 sts-timingsystem
 
 `app/.env` (mode dev) atau `photofinish.json` (aplikasi terpasang, lihat
-[PANDUAN-DEPLOY.md §5](PANDUAN-DEPLOY.md)):
+[PANDUAN-DEPLOY.md bagian 0.7](PANDUAN-DEPLOY.md)):
 
 ```
 PF_API_URL=https://pf.domain-anda.id
