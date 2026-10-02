@@ -106,7 +106,7 @@ async function submit() {
       <label v-if="needsManual" class="field" style="margin-top: 14px">
         <span class="field-label">Waktu manual</span>
         <input v-model="form.manualTime" class="input mono" placeholder="HH:MM:SS.mmm" />
-        <span class="field-help">Tidak ada impuls dan jam kamera belum tersinkron untuk perahu ini.</span>
+        <span class="field-help">Tidak ada sinyal dan jam kamera belum tersinkron untuk perahu ini.</span>
       </label>
       <label v-if="isCorrection" class="field" style="margin-top: 14px">
         <span class="field-label">Alasan koreksi</span>

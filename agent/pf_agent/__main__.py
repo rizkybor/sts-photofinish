@@ -5,14 +5,12 @@ import logging
 
 import cv2
 
-from . import slitscan
-from .camera import CameraSource
-from .client import AgentClient, LatestFrame
+from .camera import CameraError, CameraSource
+from .client import AgentClient
 from .config import AgentConfig
 from .extract import preview_with_line
-from .ringbuffer import LineRing
-from .frames import FrameArchive
-from .trigger import LineTrigger
+from .pipeline import Pipeline
+from .settings import CameraSettings
 
 
 def main() -> None:
@@ -26,45 +24,26 @@ def main() -> None:
     camera = CameraSource(cfg.camera_source, cfg.camera_fps, cfg.frame_width, cfg.frame_height)
 
     if args.preview:
-        frame = camera.snapshot()
+        try:
+            frame = camera.snapshot()
+        except CameraError as err:
+            raise SystemExit(str(err)) from err
         out = cfg.captures_dir / "preview.png"
         out.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(out), preview_with_line(frame, cfg.finish_line))
         print(f"Frame {frame.shape[1]}x{frame.shape[0]} disimpan ke {out}")
         return
 
-    first = camera.snapshot()
-    height, width = first.shape[:2]
-    coords = slitscan.line_coords(cfg.finish_line, width, height)
-    capacity = int(cfg.camera_fps * cfg.buffer_seconds)
-    ring = LineRing(capacity, line_len=len(coords[0]), channels=first.shape[2] if first.ndim == 3 else 1)
-    logging.info("Kamera %s %dx%d, buffer %d frame (%.0f dtk @ %.0f fps)", cfg.camera_id, width, height, capacity, cfg.buffer_seconds, cfg.camera_fps)
-
-    latest = LatestFrame()
-    archive = FrameArchive(cfg.frames, cfg.camera_fps) if cfg.frames else None
-    if archive:
-        logging.info("Arsip frame utuh AKTIF (%.0f fps, lebar %d px)", archive.fps, cfg.frames.width)
-    client = AgentClient(cfg, ring, latest=latest, camera=camera, archive=archive)
-    trigger = LineTrigger(cfg.trigger) if cfg.trigger else None
-    if trigger:
-        logging.info("Photocell virtual AKTIF (ambang %.0f, rangkaian min %.0f%% garis)", cfg.trigger.threshold, cfg.trigger.min_run * 100)
-
-    def on_frame(ts: int, frame) -> None:
-        line = slitscan.sample_line(frame, coords)
-        ring.push(ts, line)
-        latest.set(ts, frame)  # hanya referensi — untuk cuplikan standby
-        if archive is not None:
-            archive.push(ts, frame)
-        if trigger is not None:
-            fired = trigger.update(ts, line)
-            if fired is not None:
-                client.report_trigger(fired)
-
-    camera.start(on_frame)
+    pipeline = Pipeline(CameraSettings.from_agent_config(cfg), cfg.buffer_seconds)
+    try:
+        pipeline.start()
+    except CameraError as err:
+        raise SystemExit(str(err)) from err
+    client = AgentClient(cfg, pipeline)
     try:
         client.run()
     finally:
-        camera.stop()
+        pipeline.stop()
 
 
 if __name__ == "__main__":

@@ -121,6 +121,20 @@ cd agent && source ../scripts/lib-env.sh && load_env ../.env && .venv/bin/pf-age
 # buka data/captures/preview.png
 ```
 
+**Lebih mudah lewat web:** setelah agent jalan, buka menu **Pengaturan Kamera**
+(akun operator/admin). Di sana bisa:
+
+- memilih sumber: **Kamera laptop / iPhone / Kamera eksternal / Kamera IP / Video uji**,
+  lalu **Pindai kamera** untuk melihat nomor & nama perangkat;
+- mengatur fps, resolusi, garis finish (**Otomatis** atau **Atur di gambar**: klik
+  dua titik, tombol **Luruskan**), photocell virtual, dan foto frame;
+- **Terapkan**: diterapkan langsung tanpa restart agent. Bila kamera baru gagal
+  dibuka, agent kembali ke pengaturan lama dan tidak ada yang tersimpan;
+- **Kembalikan ke .env**: menghapus pengaturan web, agent memakai nilai `.env` lagi.
+
+Pengaturan web disimpan di database (`pf_camera_configs`) dan dikirim ulang ke
+agent setiap kali agent tersambung, jadi `.env` cukup diisi nilai awal.
+
 ### 0.6 Akun & token
 
 Database (0.4) harus bisa diakses.
@@ -315,17 +329,40 @@ Langkah lengkap ada di **[PANDUAN-VPS.md](PANDUAN-VPS.md)**. Ringkasnya:
 | 3 | Operator | **Standby Kamera**: tiang photocell berimpit dengan garis biru tegak lurus, indikator **hijau** |
 | 4 | Operator timing | Halaman lomba: badge **"Photo Finish terhubung"** → **Connect Racetime** |
 
-**Setiap heat**
+**Selama lomba: operator PF standby di layar Standby Kamera**
+
+Jeda antar heat bisa < 2 menit, jadi operator **tidak** membuka detail sesi
+untuk setiap finish. Bar heat di atas layar selalu menampilkan sesi yang
+**AKTIF**; layar Standby menampilkan feed **Finish terakhir**.
+
+| Kejadian | Yang dilakukan |
+|---|---|
+| Finish **satu perahu** | Tidak ada. Feed menulis "Tercatat"; waktu resmi dari RaceTime2 |
+| Finish **berdekatan** (≥ 2 perahu dalam satu kelompok) | Bunyi + banner kuning **Finish berdekatan**. Tekan **Tinjau sekarang** (T): detail sesi terbuka tepat di finish itu |
+| Selesai meninjau | Banner hijau. **Kembali ke Standby** (S) |
+| Heat/run berikutnya | Dari timing: **Kirim heat** (bar heat pindah sendiri). Tanpa timing: **Heat berikutnya** (N): form terisi dari sesi aktif (nomor heat +1), **Enter** = buat & aktifkan, tetap di Standby |
+| Finish berdekatan heat lama belum ditinjau | Muncul di bar heat sebagai "Berdekatan belum ditinjau". Klik untuk meninjau kapan saja. Sinyal heat baru tetap masuk ke heat aktif |
+
+Pintasan keyboard (di luar kolom isian): **T** tinjau finish berdekatan
+berikutnya · **S** Standby · **N** heat/run berikutnya · **A** detail sesi aktif.
+
+**Satu sesi per format**
+
+| Format | Satu sesi = | Catatan |
+|---|---|---|
+| H2H / Rafting Cross | satu heat (2 / 4 perahu) | Ganti sesi tiap heat (N atau Kirim heat dari timing) |
+| DRR | satu kategori | Semua perahu kategori itu finish di sesi yang sama. Detail sesi menampilkan **Berdekatan & perlu ditinjau** secara bawaan |
+| Sprint / Slalom | satu run per kategori (Run 1, Run 2) | Perahu finish satu per satu; jarang berdekatan |
+
+**Meninjau finish berdekatan**
 
 | # | Siapa | Langkah |
 |---|---|---|
-| 1 | Operator timing | **Kirim heat ke Photo Finish** → pilih heat → **Kirim & aktifkan** |
-| 2 | — | Perahu melintas: rekaman terpicu otomatis. Di timing muncul baris `Photo Finish` + Buffer-Timer-Finish |
-| 3 | Operator PF | Pilih lintasan → klik **haluan** tiap perahu sesuai urutan tiba. Finish tipis: periksa **Foto frame** (◀ ▶) |
-| 4 | Operator PF | Heat pertama saja: **Kalibrasi kamera** (butuh impuls RaceTime2) |
-| 5 | Juri | **Konfirmasi** tiap perahu: jumlah awak, posisi perahu, melintas 2× |
-| 6 | — | **Finish Time terisi otomatis** di timing. Penalti finish yang dicatat juri diterapkan operator timing |
-| 7 | Operator PF | Tangkapan palsu (orang lewat) → **Hapus**. Yang sudah dikonfirmasi juri tidak bisa dihapus |
+| 1 | Operator PF | Pilih lintasan/tim → klik **haluan** tiap perahu sesuai urutan tiba. Finish tipis: periksa **Foto frame** (◀ ▶) |
+| 2 | Operator PF | Heat pertama saja: **Kalibrasi kamera** (butuh sinyal RaceTime2) |
+| 3 | Juri | **Konfirmasi** tiap perahu: jumlah awak, posisi perahu, melintas 2× |
+| 4 | — | **Finish Time terisi otomatis** di timing. Penalti finish yang dicatat juri diterapkan operator timing |
+| 5 | Operator PF | Tangkapan palsu (orang lewat) → **Hapus**. Yang sudah dikonfirmasi juri tidak bisa dihapus |
 
 **Setelah lomba: backup**
 
@@ -377,7 +414,7 @@ Jangan memperbarui di tengah hari lomba.
 | Gambar Standby **berkedip** | Dua agent untuk kamera yang sama. Sisakan satu |
 | Pemicu terlalu sering / tidak memicu | Atur `PF_TRIGGER_THRESHOLD` / `PF_TRIGGER_MIN_RUN`, restart agent. Pastikan sesi **AKTIF** |
 | Foto frame "tidak menyimpan frame utuh" | Rekaman lama, atau `PF_FRAMES=off` |
-| Timing: "Photo Finish terputus" | API mati, `PF_API_URL` salah, atau firewall. Impuls tetap antre |
+| Timing: "Photo Finish terputus" | API mati, `PF_API_URL` salah, atau firewall. Sinyal tetap antre |
 | Timing: "… hasil menunggu" | Buka kategori & heat yang sama dengan sesi Photo Finish |
 | Timing tidak bisa membuka database | `MONGO_URI` belum ada di `app/.env` (atau installer di-build tanpa `MONGO_URI`) |
 | Tablet tidak bisa membuka `http://<ip>:4100` | Beda jaringan, atau firewall macOS memblokir node |

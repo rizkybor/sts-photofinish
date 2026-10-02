@@ -14,6 +14,15 @@ export interface Session {
   calibrationOffsetNs: string; calibratedAt: string | null; createdAt: string;
 }
 
+/** `pending` = finish berdekatan (≥ 2 perahu) yang belum selesai ditinjau. */
+export interface SessionProgress { finishes: number; recording: number; close: number; pending: number; confirmed: number }
+
+export interface FinishEvent {
+  groupId: string; sessionId: string; sessionLabel: string; raceCategory: RaceCategory; armed: boolean; status: "collecting" | "extracting" | "ready"; createdAt: string;
+  boats: number; gapMs: number | null; close: boolean; marked: number; confirmed: number; needsReview: boolean; resolved: boolean;
+}
+export type SessionSummary = Session & { progress: SessionProgress };
+
 export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; timeBasis: "device" | "pf-clock"; source?: "racetime" | "camera"; deviceTimeNs: string; deviceOffsetNs: string | null }
 
 export interface Group { _id: string; impulseIds: string[]; status: "collecting" | "extracting" | "ready"; warnings: string[]; createdAt: string }

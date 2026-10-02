@@ -1,6 +1,6 @@
 // Prinsip Fase 1: kamera menentukan URUTAN, RaceTime2 menentukan WAKTU.
-// Crossing urutan ke-n dipasangkan dengan impuls ke-n (urut waktu perangkat)
-// dalam satu kelompok finish. Bila impuls kurang dari jumlah perahu
+// Crossing urutan ke-n dipasangkan dengan sinyal ke-n (urut waktu perangkat)
+// dalam satu kelompok finish. Bila sinyal kurang dari jumlah perahu
 // (photocell terhalang perahu pertama), sisa crossing memakai waktu kamera.
 
 import { diffDayNs, NS_PER_MS } from "./time.js";
@@ -32,7 +32,7 @@ export interface PairOutcome {
   groupWarnings: string[];
 }
 
-/** Batas selisih kamera vs impuls sebelum diberi peringatan. */
+/** Batas selisih kamera vs sinyal sebelum diberi peringatan. */
 export const MISMATCH_TOLERANCE_NS = 500n * NS_PER_MS;
 
 export function pairByOrder(crossings: PairCrossing[], impulses: PairImpulse[]): PairOutcome {
@@ -45,7 +45,7 @@ export function pairByOrder(crossings: PairCrossing[], impulses: PairImpulse[]):
 
   if (byTime.length > byRank.length) {
     groupWarnings.push(
-      `Impuls (${byTime.length}) lebih banyak dari perahu yang ditandai (${byRank.length}) — ` +
+      `Sinyal (${byTime.length}) lebih banyak dari perahu yang ditandai (${byRank.length}) — ` +
         "cek percikan/dayung memicu photocell atau perahu melintas dua kali (DSQ).",
     );
   }
@@ -64,18 +64,18 @@ export function pairByOrder(crossings: PairCrossing[], impulses: PairImpulse[]):
       if (c.cameraTimeNs != null) {
         const d = diffDayNs(imp.deviceTimeNs, c.cameraTimeNs);
         if ((d < 0n ? -d : d) > MISMATCH_TOLERANCE_NS) {
-          warnings.push(`Selisih waktu impuls vs kamera ${Number(d / NS_PER_MS)} ms — periksa kalibrasi.`);
+          warnings.push(`Selisih waktu sinyal vs kamera ${Number(d / NS_PER_MS)} ms — periksa kalibrasi.`);
         }
       }
       return { crossingId: c.id, impulseId: imp.id, timeSource: "impulse", timeNs: imp.deviceTimeNs, warnings };
     }
 
     if (c.cameraTimeNs != null) {
-      warnings.push("Tidak ada impuls untuk perahu ini — memakai waktu kamera.");
+      warnings.push("Tidak ada sinyal untuk perahu ini — memakai waktu kamera.");
       return { crossingId: c.id, impulseId: null, timeSource: "camera", timeNs: c.cameraTimeNs, warnings };
     }
 
-    warnings.push("Tidak ada impuls dan jam kamera belum tersinkron — waktu harus diisi manual.");
+    warnings.push("Tidak ada sinyal dan jam kamera belum tersinkron — waktu harus diisi manual.");
     return { crossingId: c.id, impulseId: null, timeSource: null, timeNs: null, warnings };
   });
 

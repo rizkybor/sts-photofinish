@@ -144,7 +144,7 @@ test("socket tanpa token ditolak; login salah ditolak", async () => {
   assert.equal((await http("POST", "/api/auth/login", undefined, { username: "op", password: "salah" })).status, 401);
 });
 
-test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing", async () => {
+test("heat H2H: urutan dari kamera, waktu dari sinyal, hasil terkirim ke timing", async () => {
   const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
   const [op, juri, adm] = [await login("op"), await login("juri"), await login("adm")];
   const timingToken = issueToken({ sub: "device:timing:1", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h");
@@ -166,7 +166,7 @@ test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing"
   // --- Agent: jam agent = jam host (offset 0), membuat slit-scan palsu 240 fps
   const agent = await fakeAgent(agentToken);
 
-  // --- Timing system: offset jam perangkat lalu dua impuls finish 300 ms
+  // --- Timing system: offset jam perangkat lalu dua sinyal finish 300 ms
   const timing = await socket(timingToken);
   const verified: any[] = [];
   timing.on("photofinish:verified", (msg: any, ack: (r: unknown) => void) => {
@@ -196,11 +196,11 @@ test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing"
   for (const [seq, deviceTime] of [[1, t1], [2, t2]] as const) {
     assert.equal((await emit("timing:impulse", { type: "timing:impulse", bootId, seq, channel: "FINISH", deviceTime, hostNs: now.toString() })).ok, true);
   }
-  // Kirim ulang (reconnect) tidak boleh menggandakan impuls.
+  // Kirim ulang (reconnect) tidak boleh menggandakan sinyal.
   await emit("timing:impulse", { type: "timing:impulse", bootId, seq: 2, channel: "FINISH", deviceTime: t2, hostNs: now.toString() });
   assert.equal(await database.col.impulses.countDocuments({ bootId }), 2);
 
-  // --- Kedua impuls masuk SATU kelompok finish, lalu agent mengirim capture
+  // --- Kedua sinyal masuk SATU kelompok finish, lalu agent mengirim capture
   await until(async () => (await database.col.captures.countDocuments()) === 1);
   const detail = (await http("GET", `/api/sessions/${session._id}`, op)).data;
   assert.equal(detail.groups.length, 1);
@@ -219,6 +219,10 @@ test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing"
   const colB = colAt(parseClock(t1) + 2n * NS_PER_MS);
   const colA = colAt(parseClock(t2) + 1n * NS_PER_MS);
 
+  // Progres untuk bar perpindahan heat: rekaman siap tanpa tanda = perlu ditinjau.
+  const progressOf = async () => (await http("GET", "/api/sessions", op)).data.find((s: any) => s._id === session._id).progress;
+  assert.deepEqual(await progressOf(), { finishes: 1, recording: 0, close: 1, pending: 1, confirmed: 0 });
+
   // --- Operator menandai urutan: B duluan, lalu A
   const markB = await http("POST", "/api/crossings", op, { captureId: capture._id, column: colB, rank: 1, lane: "B" });
   const markA = await http("POST", "/api/crossings", op, { captureId: capture._id, column: colA, rank: 2, lane: "A" });
@@ -229,7 +233,12 @@ test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing"
   assert.equal(cB.timeSource, "impulse");
   assert.equal(cB.finishTime, t1);
   assert.equal(cA.finishTime, t2);
-  assert.deepEqual(cB.warnings, [], "kamera & impuls selisih < 500 ms → tanpa peringatan");
+  assert.deepEqual(cB.warnings, [], "kamera & sinyal selisih < 500 ms → tanpa peringatan");
+  assert.equal((await progressOf()).pending, 1, "finish berdekatan belum dikonfirmasi");
+  const feed = (await http("GET", "/api/finishes", op)).data;
+  assert.equal(feed[0].boats, 2);
+  assert.equal(feed[0].gapMs, 300);
+  assert.equal(feed[0].close, true);
 
   // --- Hanya juri yang boleh konfirmasi
   const confirmBody = { teamId: "team-b", lane: "B", crewInBoat: 6, crewExpected: 6, upright: true };
@@ -238,6 +247,7 @@ test("heat H2H: urutan dari kamera, waktu dari impuls, hasil terkirim ke timing"
   await http("POST", `/api/crossings/${cA._id}/confirm`, juri, { teamId: "team-a", lane: "A", crewInBoat: 5, crewExpected: 6, upright: true });
 
   await until(() => verified.length === 2);
+  assert.deepEqual(await progressOf(), { finishes: 1, recording: 0, close: 1, pending: 0, confirmed: 2 });
   assert.deepEqual(verified.map((v) => [v.teamId, v.rank, v.finishTime]), [["team-b", 1, t1], ["team-a", 2, t2]]);
   assert.equal(verified[1].penalties.crewIncomplete, true);
   await until(async () => (await database.col.crossings.countDocuments({ deliveredRevision: 1 })) === 2);
@@ -324,7 +334,7 @@ test("jam Photo Finish: kalibrasi admin, snapshot per rekaman, bukti lama tidak 
   timing.close();
 });
 
-test("frame RaceTime2 tanpa payload: waktu impuls dari jam PF, bucket ikut ke timing", async () => {
+test("frame RaceTime2 tanpa payload: waktu sinyal dari jam PF, bucket ikut ke timing", async () => {
   const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
   const [op, juri, adm] = [await login("op"), await login("juri"), await login("adm")];
   const timing = await socket(issueToken({ sub: "device:timing:3", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
@@ -476,7 +486,7 @@ test("photocell virtual: pemicu kamera memicu rekaman, waktu perahu dari kolom g
   assert.equal(ca!.timeSource, "camera");
   assert.equal(cb!.timeSource, "camera");
   assert.equal(BigInt(cb!.timeNs!) - BigInt(ca!.timeNs!), 4_166_667n);
-  assert.ok(!ca!.warnings.some((w) => w.includes("Impuls")), "pemicu kamera tidak dihitung sebagai impuls berlebih");
+  assert.ok(!ca!.warnings.some((w) => w.includes("Sinyal")), "pemicu kamera tidak dihitung sebagai sinyal berlebih");
   agent.socket.close();
 });
 
@@ -527,7 +537,7 @@ test("production: API menyajikan web app hasil build bila PF_WEB_DIR ada", async
   }
 });
 
-test("hapus tangkapan: file & tanda dihapus, impuls RaceTime2 kembali tanpa sesi, hasil terkonfirmasi dilindungi", async () => {
+test("hapus tangkapan: file & tanda dihapus, sinyal RaceTime2 kembali tanpa sesi, hasil terkonfirmasi dilindungi", async () => {
   const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
   const [op, juri, lihat] = [await login("op"), await login("juri"), await login("lihat")];
   const agent = await fakeAgent(issueToken({ sub: "device:agent:del", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"));
@@ -554,7 +564,7 @@ test("hapus tangkapan: file & tanda dihapus, impuls RaceTime2 kembali tanpa sesi
   assert.equal(await database.col.crossings.countDocuments({ groupId: cap1.groupId }), 0);
   assert.equal((await capturesOf()).length, 0);
   const back = (await database.col.impulses.findOne({ _id: new ObjectId(imp1) }))!;
-  assert.equal(back.sessionId, null, "impuls RaceTime2 kembali ke daftar tanpa sesi");
+  assert.equal(back.sessionId, null, "sinyal RaceTime2 kembali ke daftar tanpa sesi");
   await assert.rejects(readFile(path.join(capturesDir, cap1.file)), "file gambar terhapus dari disk");
   assert.ok(await database.col.audit.findOne({ action: "group.delete", entityId: cap1.groupId.toHexString() }));
 
@@ -635,4 +645,70 @@ test("mode VPS: agent jarak jauh mengunggah rekaman lewat HTTP, path & peran dib
   assert.equal(await (await fetch(base + data.frames[1].url)).text(), "frame-2");
   agent.socket.close();
   timing.close();
+});
+
+test("pengaturan kamera: tertunda saat offline, diterapkan & disimpan, gagal tidak disimpan, pindai, reset", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const [op, lihat] = [await login("op"), await login("lihat")];
+  const cfg = {
+    sourceType: "iphone", source: "0", fps: 30, width: null, height: null,
+    finishLine: { x1: 960, y1: 0, x2: 960, y2: 1079 },
+    trigger: { enabled: true, threshold: 30, minRun: 0.06 }, frames: { enabled: true, fps: 30, width: 1280 },
+  };
+  assert.equal((await http("GET", "/api/cameras", lihat)).status, 403, "viewer tidak boleh mengatur kamera");
+
+  // 1) Agent offline → disimpan sebagai tertunda
+  const pending = await http("PUT", "/api/cameras/cam-set/config", op, cfg);
+  assert.equal(pending.data.pending, true);
+
+  // 2) Agent terhubung → menerima pengaturan tersimpan
+  const token = issueToken({ sub: "device:agent:set", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h");
+  const agent = connect(base, { auth: { token, cameraId: "cam-set" }, transports: ["websocket"], reconnection: false });
+  sockets.push(agent);
+  const received: any[] = [];
+  let failNext = false;
+  agent.on("agent:config", (msg: any, ack: (r: unknown) => void) => {
+    received.push(msg.config);
+    if (failNext) return ack({ ok: false, error: "Kamera tidak bisa dibuka: 7" });
+    ack({ ok: true, status: { running: true, width: 1920, height: 1080, settings: msg.config } });
+  });
+  agent.on("agent:scan", (_m: unknown, ack: (r: unknown) => void) =>
+    ack({ ok: true, cameras: [{ index: 0, width: 1920, height: 1080, inUse: true }, { index: 1, width: 1280, height: 720, inUse: false }], deviceNames: ["FaceTime HD Camera", "iPhone"], videos: [] }));
+  await new Promise<void>((r) => agent.once("connect", () => r()));
+  await until(() => received.length === 1);
+  assert.equal(received[0].sourceType, "iphone", "pengaturan tertunda diterapkan saat agent terhubung");
+  agent.emit("agent:status", { running: true, width: 1920, height: 1080, measuredFps: 29.9 });
+
+  // 3) Online: berhasil → disimpan (revisi naik)
+  const ok = await http("PUT", "/api/cameras/cam-set/config", op, { ...cfg, sourceType: "laptop", source: "1" });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.applied, true);
+  let list = (await http("GET", "/api/cameras", op)).data.find((c: any) => c.cameraId === "cam-set");
+  assert.equal(list.connected, true);
+  assert.equal(list.saved.revision, 2);
+  assert.equal(list.saved.config.sourceType, "laptop");
+  assert.equal(list.status.measuredFps, 29.9);
+
+  // 4) Agent gagal membuka kamera → 422, pengaturan TIDAK disimpan
+  failNext = true;
+  const bad = await http("PUT", "/api/cameras/cam-set/config", op, { ...cfg, sourceType: "external", source: "7" });
+  assert.equal(bad.status, 422);
+  assert.match(bad.data.error, /tidak bisa dibuka/);
+  list = (await http("GET", "/api/cameras", op)).data.find((c: any) => c.cameraId === "cam-set");
+  assert.equal(list.saved.revision, 2, "pengaturan gagal tidak menimpa yang tersimpan");
+  failNext = false;
+
+  // 5) Validasi & pindai
+  assert.equal((await http("PUT", "/api/cameras/cam-set/config", op, { ...cfg, fps: 0 })).status, 400);
+  const scan = await http("POST", "/api/cameras/cam-set/scan", op);
+  assert.equal(scan.data.cameras.length, 2);
+  assert.equal((await http("POST", "/api/cameras/cam-lain/scan", op)).status, 409, "agent tidak terhubung");
+
+  // 6) Kembali ke .env → agent menerima config null, simpanan dihapus
+  const reset = await http("DELETE", "/api/cameras/cam-set/config", op);
+  assert.equal(reset.data.reset, true);
+  await until(() => received.at(-1) === null);
+  assert.equal(await database.col.cameraConfigs.countDocuments({ _id: "cam-set" }), 0);
+  assert.ok(await database.col.audit.findOne({ action: "camera.config", entityId: "cam-set" }));
+  agent.close();
 });

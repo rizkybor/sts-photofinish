@@ -29,7 +29,7 @@ berbeda, atau lokasi lomba dengan internet stabil.
 
 | Hal | Dampak |
 |---|---|
-| **Butuh internet di lokasi** | Tanpa internet, impuls tetap antre di sts-timingsystem, tetapi rekaman kamera tidak bisa diunggah, sehingga tinjauan tertunda |
+| **Butuh internet di lokasi** | Tanpa internet, sinyal tetap antre di sts-timingsystem, tetapi rekaman kamera tidak bisa diunggah, sehingga tinjauan tertunda |
 | **Jeda internet tidak stabil** | Jam agent disinkronkan ke VPS lewat internet (sampel jeda terkecil dipakai). Ketelitian lebih rendah daripada LAN. Lakukan **Kalibrasi kamera** di setiap sesi |
 | **Upload rekaman** | Satu tangkapan ≈ 2–25 MB (slit-scan + foto frame). Di koneksi seluler, turunkan `PF_FRAMES_FPS` / `PF_FRAMES_WIDTH`, atau `PF_FRAMES=off` |
 | **Data atlet di internet** | Wajib HTTPS, password kuat, dan firewall (bagian 9) |
@@ -299,7 +299,7 @@ Jangan memperbarui di tengah lomba.
 | Agent: `Gagal mengunggah …` | Internet lokasi putus. Agent mencoba 3×. Rekaman tetap ada di laptop lokasi |
 | Agent: `File capture tidak ditemukan` | `PF_UPLOAD_CAPTURES` belum `on` di laptop kamera |
 | Agent/timing: `Unauthorized` | Token dibuat dengan `PF_JWT_SECRET` lain, atau sudah kedaluwarsa. Buat ulang di VPS |
-| Timing: impuls/hasil ditolak (HMAC) | `PF_HMAC_SECRET` di timing ≠ di VPS |
+| Timing: sinyal/hasil ditolak (HMAC) | `PF_HMAC_SECRET` di timing ≠ di VPS |
 | Semua orang terkena "terlalu banyak percobaan login" | `PF_TRUST_PROXY=true` belum diset, lalu `npm run prod:restart` |
 | Sertifikat HTTPS gagal | DNS belum mengarah ke IP VPS, atau port 80 diblokir firewall |
 | Waktu rekaman kurang presisi | Jeda internet. Lakukan Kalibrasi kamera di setiap sesi. Untuk lomba resmi gunakan mode LAN |

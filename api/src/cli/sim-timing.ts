@@ -1,8 +1,8 @@
 // Simulator sts-timingsystem + RaceTime2 untuk uji lokal tanpa perangkat.
 // Pemakaian: npm run sim:timing -w api
-//   Enter          → satu impuls FINISH (frame bare, seperti RaceTime2 di lapangan)
-//   2 + Enter      → dua impuls berjarak 300 ms (dua perahu berdekatan, H2H)
-//   4 + Enter      → empat impuls berjarak 200 ms (Rafting Cross)
+//   Enter          → satu sinyal FINISH (frame bare, seperti RaceTime2 di lapangan)
+//   2 + Enter      → dua sinyal berjarak 300 ms (dua perahu berdekatan, H2H)
+//   4 + Enter      → empat sinyal berjarak 200 ms (Rafting Cross)
 //   q + Enter      → keluar
 // Hasil photo finish (photofinish:verified) dari juri dicetak dan di-ack.
 import { randomUUID } from "node:crypto";
@@ -21,7 +21,7 @@ const SERIAL_LATENCY_NS = 166_666_666n; // 20 byte @ 1200 baud
 let seq = 0;
 
 const socket = io(url, { auth: { token }, transports: ["websocket"] });
-socket.on("connect", () => console.log(`[sim] terhubung ke ${url} — Enter = impuls finish, 2/4 = beberapa perahu, q = keluar`));
+socket.on("connect", () => console.log(`[sim] terhubung ke ${url} — Enter = sinyal finish, 2/4 = beberapa perahu, q = keluar`));
 socket.on("connect_error", (err) => console.error(`[sim] gagal terhubung: ${err.message}`));
 
 socket.on("photofinish:verified", (msg: Record<string, any>, ack: (r: unknown) => void) => {
@@ -39,7 +39,7 @@ async function impulse() {
     type: "timing:impulse", bootId, seq: seq++, channel: "FINISH",
     hostNs: hostNs.toString(), serialLatencyNs: SERIAL_LATENCY_NS.toString(),
   }, cfg.PF_HMAC_SECRET));
-  console.log(res.ok ? `[sim] impuls #${seq} terkirim` : `[sim] impuls ditolak: ${res.error}`);
+  console.log(res.ok ? `[sim] sinyal #${seq} terkirim` : `[sim] sinyal ditolak: ${res.error}`);
 }
 
 const rl = createInterface({ input: process.stdin });

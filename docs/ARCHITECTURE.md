@@ -10,31 +10,31 @@ ubah dokumen ini setiap kali keputusan arsitektur berubah.
 |---|---|---|
 | **Inti** | Head-to-Head (H2H) | 2 perahu finish berdekatan — siapa duluan, waktu masing-masing |
 | **Inti** | Rafting Cross (RX) | 4 perahu sekaligus — urutan 1–4, eliminasi pelanggaran finish |
-| **Inti** | Down River Race (DRR) | Banyak perahu tiba acak — impuls mana milik tim mana |
+| **Inti** | Down River Race (DRR) | Banyak perahu tiba acak — sinyal mana milik tim mana |
 | Opsional | Sprint, Slalom | Verifikasi waktu 1 perahu (pakai fitur inti apa adanya) |
 
 ### Masalah di sistem saat ini
 
 Di sts-timingsystem, `onFinish` (`src/mixins/serialPortMixin.js`) menulis
-impuls STOP RaceTime2 ke **satu variabel** `digitTimeFinish`, lalu operator
+sinyal STOP RaceTime2 ke **satu variabel** `digitTimeFinish`, lalu operator
 mengklik tombol "BIB xx" (`OperationTeamPanel.vue`) untuk menempelkannya ke
 tim. Saat 2–4 perahu finish < 1 detik:
 
-1. Impuls berikutnya **menimpa** impuls sebelumnya sebelum sempat diklik.
-2. Operator **menebak** perahu mana pemicu impuls mana, tanpa bukti gambar.
+1. Sinyal berikutnya **menimpa** sinyal sebelumnya sebelum sempat diklik.
+2. Operator **menebak** perahu mana pemicu sinyal mana, tanpa bukti gambar.
 
-Photo finish menggantinya dengan **antrean impuls + gambar garis finish**.
+Photo finish menggantinya dengan **antrean sinyal + gambar garis finish**.
 
 ### Prinsip: kamera menentukan **urutan**, RaceTime2 menentukan **waktu**
 
 Cukup **satu kamera di tepi sungai** yang membidik garis finish. Tugas
 utamanya adalah menjawab *perahu mana yang lebih dulu*. Juri menandai
-urutan tiba di gambar, lalu impuls RaceTime2 dipasangkan ke tim sesuai
-urutan itu (impuls ke-1 → perahu urutan 1, dst.).
+urutan tiba di gambar, lalu sinyal RaceTime2 dipasangkan ke tim sesuai
+urutan itu (sinyal ke-1 → perahu urutan 1, dst.).
 
 Waktu dari frame kamera hanya dipakai sebagai **cadangan**, yaitu saat
-jumlah impuls lebih sedikit daripada jumlah perahu (photocell terhalang
-perahu pertama sehingga perahu kedua tidak memicu impuls sendiri).
+jumlah sinyal lebih sedikit daripada jumlah perahu (photocell terhalang
+perahu pertama sehingga perahu kedua tidak memicu sinyal sendiri).
 
 ## 2. Aturan FAJI 2026 yang mengikat desain
 
@@ -73,15 +73,15 @@ Sumber: *Draft Peraturan Penyelenggaraan Kompetisi Arung Jeram Indonesia 2026 V4
 ```
 
 **Offline-first.** Seluruh alur waktu berjalan di LAN lokasi. Broker
-racehub di render.com **tidak** dipakai untuk impuls/hasil (latensi
+racehub di render.com **tidak** dipakai untuk sinyal/hasil (latensi
 internet = waktu meleset; sungai sering tanpa sinyal).
 
 ## 4. Komponen & teknologi
 
 | Komponen | Folder | Teknologi | Peran |
 |---|---|---|---|
-| Capture Agent | `agent/` | Python ≥3.10, OpenCV, NumPy, python-socketio, httpx | Baca kamera, ring buffer garis finish bertimestamp, sinkron jam, potong jendela waktu sekitar impuls, buat gambar slit-scan. Tidak membuka port masuk — hanya koneksi keluar ke API |
-| Photo Finish API | `api/` | Node ≥20, TypeScript, Fastify 5, Socket.IO 4, Zod, MongoDB driver | Sumber kebenaran: sesi, impuls, capture, crossing, audit; jembatan ke timing system |
+| Capture Agent | `agent/` | Python ≥3.10, OpenCV, NumPy, python-socketio, httpx | Baca kamera, ring buffer garis finish bertimestamp, sinkron jam, potong jendela waktu sekitar sinyal, buat gambar slit-scan. Tidak membuka port masuk — hanya koneksi keluar ke API |
+| Photo Finish API | `api/` | Node ≥20, TypeScript, Fastify 5, Socket.IO 4, Zod, MongoDB driver | Sumber kebenaran: sesi, sinyal, capture, crossing, audit; jembatan ke timing system |
 | Web App | `web/` | Vue 3, Vite, TypeScript, Canvas 2D | Review slit-scan, tandai haluan, tetapkan tim/lintasan, konfirmasi |
 | Database | — | MongoDB 7 | Sama dengan timing system, ID event/race/tim dipakai bersama |
 | Penyimpanan file | `data/captures` | Filesystem lokal + signed URL | Fase berikut: MinIO (S3) saat agent & API beda mesin, R2/S3 di cloud |
@@ -131,7 +131,7 @@ berasal dari situ. Hasil photo finish harus dikonversi kembali ke basis ini.
 2. **Host agent → host API.** Agent melakukan ping-pong gaya NTP
    (`clock:ping` via socket), memakai sampel RTT terkecil → `agentOffsetNs`.
 3. **Kalibrasi lapangan** sebelum heat pertama: satu perahu/orang melintasi
-   garis. `calibrationOffsetNs = waktu impuls photocell − waktu frame
+   garis. `calibrationOffsetNs = waktu sinyal photocell − waktu frame
    haluan`. Ini menyerap sisa bias (posisi garis kamera vs photocell,
    latensi sensor kamera).
 
@@ -142,7 +142,7 @@ deviceTime(frame) = frameHostNs + agentOffsetNs − deviceOffsetNs + calibration
 ### Frame RaceTime2 tanpa waktu (kondisi lapangan saat ini)
 
 RaceTime2 yang dipakai mengirim frame *bare* tanpa payload waktu, sehingga
-langkah 1 (heartbeat) belum bisa berjalan. Impuls lalu dicap dengan **jam
+langkah 1 (heartbeat) belum bisa berjalan. Sinyal lalu dicap dengan **jam
 Photo Finish** saat frame diterima, dikurangi waktu transmisi serial
 (`timeBasis: "pf-clock"`). Ketepatan terhadap RaceTime2 datang dari
 kalibrasi admin di bawah. Kalau belum dikalibrasi, jam PF = jam lokal laptop
@@ -195,11 +195,11 @@ berubah warna terpanjang** ≥ `PF_TRIGGER_MIN_RUN` dari panjang garis selama 2
 frame. Perahu adalah blok utuh, sedangkan riak dan percikan tersebar, sehingga
 riak tidak memicu.
 
-- Pemicu dikirim sebagai `agent:trigger` lalu disimpan sebagai impuls `source:
+- Pemicu dikirim sebagai `agent:trigger` lalu disimpan sebagai sinyal `source:
   "camera"` dan masuk ke kelompok finish. Rekaman mencakup semua perahu yang
   berdempetan dalam **satu gambar**.
 - Pemicu kamera **bukan waktu resmi**. Pemasangan urutan↔waktu hanya memakai
-  impuls RaceTime2. Tanpa impuls RaceTime2, waktu tiap perahu = kolom gambar
+  sinyal RaceTime2. Tanpa sinyal RaceTime2, waktu tiap perahu = kolom gambar
   saat haluannya menyentuh garis (`timeSource: "camera"`), sehingga perahu yang
   selisih 1 frame tetap terpisah.
 - Hanya diterima bila ada sesi **AKTIF** dengan `cameraId` yang sama.
@@ -223,22 +223,22 @@ yang ditunjuk (◀ ▶ / tombol panah).
 
 1. Operator membuka sesi: `POST /api/sessions` (event, race, heat, lintasan
    → tim dari bagan, kamera, garis finish), lalu `POST
-   /api/sessions/:id/arm` — impuls hanya masuk ke sesi yang sedang di-arm.
-   Impuls yang datang saat tidak ada sesi aktif tetap disimpan (tanpa sesi)
+   /api/sessions/:id/arm` — sinyal hanya masuk ke sesi yang sedang di-arm.
+   Sinyal yang datang saat tidak ada sesi aktif tetap disimpan (tanpa sesi)
    dan bisa dipindahkan, jadi tidak pernah hilang.
 2. RaceTime2 STOP → timing system kirim `timing:impulse {seq, deviceTime,
    hostNs}` ke API (socket, ditandatangani HMAC). API **menyimpan setiap
-   impuls** (tidak ada yang tertimpa), memasukkannya ke kelompok finish, lalu
+   sinyal** (tidak ada yang tertimpa), memasukkannya ke kelompok finish, lalu
    mengirim `agent:extract` ke agent setelah kelompok tenang 2 dtk.
-3. Agent memotong frame `[impuls pertama −1,5 dtk, impuls terakhir +3 dtk]`
+3. Agent memotong frame `[sinyal pertama −1,5 dtk, sinyal terakhir +3 dtk]`
    dari ring buffer kamera,
    menyimpan slit-scan PNG + `columns.json` (waktu per kolom), menghitung
    SHA-256, lalu `POST /api/captures`.
 4. Web App menerima `capture:ready` dan menampilkan slit-scan. Juri
    mengklik haluan tiap perahu **sesuai urutan tiba** dan memilih tim/
    lintasannya → `POST /api/crossings` (urutan = `rank`).
-5. API memasangkan crossing urutan ke-n dengan impuls ke-n di jendela itu
-   (`timeSource: "impulse"`). Bila impuls kurang dari jumlah perahu, sisa
+5. API memasangkan crossing urutan ke-n dengan sinyal ke-n di jendela itu
+   (`timeSource: "impulse"`). Bila sinyal kurang dari jumlah perahu, sisa
    crossing memakai waktu kolom kamera (`timeSource: "camera"`, ditandai di
    UI dan PDF). Juri mengisi awak & posisi perahu → `POST
    /api/crossings/:id/confirm` (role `judge`). Tercatat di audit log.
@@ -261,8 +261,8 @@ pf_impulses  { sessionId, seq, channel: "FINISH"|"START", deviceTime,
 pf_groups    { sessionId, impulseIds[], firstDeviceNs, lastDeviceNs,
                status: "collecting"|"extracting"|"ready",
                clock: {mode, revision, baseOffsetNs, trimNs, effectiveOffsetNs} }
-               — "kelompok finish": impuls yang jaraknya ≤ 3 dtk digabung,
-               lalu diekstrak sekali setelah 2 dtk tanpa impuls baru, agar
+               — "kelompok finish": sinyal yang jaraknya ≤ 3 dtk digabung,
+               lalu diekstrak sekali setelah 2 dtk tanpa sinyal baru, agar
                semua perahu yang bersaing ada di SATU gambar.
 pf_clock_settings { _id: "settings", mode: "auto"|"manual", manualOffsetNs,
                trimNs, revision, updatedBy, updatedAt }       (hanya admin)
@@ -321,7 +321,7 @@ Panduan implementasi + contoh kode: [INTEGRATION-TIMING.md](INTEGRATION-TIMING.m
 
 | Fase | Isi |
 |---|---|
-| **1 — H2H (MVP)** | 1 kamera tepi, jam PF + kalibrasi manual admin + pita waktu di rekaman, antrean impuls, slit-scan, tandai urutan haluan manual, pasangkan urutan ↔ impuls, waktu kamera sebagai cadangan (sinkron jam + kalibrasi), checklist awak, kirim balik ke timing, audit log |
+| **1 — H2H (MVP)** | 1 kamera tepi, jam PF + kalibrasi manual admin + pita waktu di rekaman, antrean sinyal, slit-scan, tandai urutan haluan manual, pasangkan urutan ↔ sinyal, waktu kamera sebagai cadangan (sinkron jam + kalibrasi), checklist awak, kirim balik ke timing, audit log |
 | **2 — RX** | 4 lintasan, urutan 1–4, status eliminasi, status `tie` → koin/additional run |
 | **3 — DRR** | Pilih tim dari daftar "belum finish", deteksi lintasan kedua, mulai latih model deteksi perahu (dataset dari Fase 1–2) |
 | Lanjutan | Saran haluan otomatis (YOLO-seg), kamera start (sailing start / false start), sinkron cloud, halaman hasil publik |

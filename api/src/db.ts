@@ -51,7 +51,7 @@ export interface ImpulseDoc {
   deviceTime: string;
   deviceTimeNs: string;
   /**
-   * "racetime" = impuls dari sts-timingsystem (RaceTime2) — dipakai sebagai waktu resmi.
+   * "racetime" = sinyal dari sts-timingsystem (RaceTime2) — dipakai sebagai waktu resmi.
    * "camera"   = pemicu photocell virtual dari agent — HANYA memicu rekaman; waktu
    *              perahu lalu diambil dari kolom gambar. Dokumen lama tanpa field = racetime.
    */
@@ -62,7 +62,7 @@ export interface ImpulseDoc {
   pfClockRevision: number | null;
   serialLatencyNs: string | null;
   hostNs: string;
-  /** Snapshot offset jam perangkat saat impuls diterima (null = belum sinkron). */
+  /** Snapshot offset jam perangkat saat sinyal diterima (null = belum sinkron). */
   deviceOffsetNs: string | null;
   receivedAt: Date;
 }
@@ -185,6 +185,15 @@ export interface AuditDoc {
   hash: string;
 }
 
+/** Pengaturan kamera tersimpan per cameraId — diterapkan agent saat terhubung. */
+export interface CameraConfigDoc {
+  _id: string; // cameraId
+  config: Record<string, unknown>;
+  revision: number;
+  updatedBy: string;
+  updatedAt: Date;
+}
+
 export interface Collections {
   users: Collection<UserDoc>;
   sessions: Collection<SessionDoc>;
@@ -194,6 +203,7 @@ export interface Collections {
   crossings: Collection<CrossingDoc>;
   clock: Collection<ClockDoc>;
   clockSettings: Collection<ClockSettingsDoc>;
+  cameraConfigs: Collection<CameraConfigDoc>;
   audit: Collection<AuditDoc>;
 }
 
@@ -216,12 +226,13 @@ export async function connectDb(cfg: Config): Promise<Database> {
     crossings: db.collection("pf_crossings"),
     clock: db.collection("pf_clock"),
     clockSettings: db.collection("pf_clock_settings"),
+    cameraConfigs: db.collection("pf_camera_configs"),
     audit: db.collection("pf_audit"),
   };
   await Promise.all([
     col.users.createIndex({ username: 1 }, { unique: true }),
     col.sessions.createIndex({ eventId: 1, createdAt: -1 }),
-    // Idempoten: impuls yang dikirim ulang (reconnect) tidak tercatat dua kali.
+    // Idempoten: sinyal yang dikirim ulang (reconnect) tidak tercatat dua kali.
     col.impulses.createIndex({ bootId: 1, seq: 1 }, { unique: true }),
     col.impulses.createIndex({ sessionId: 1, deviceTimeNs: 1 }),
     col.groups.createIndex({ sessionId: 1, createdAt: -1 }),

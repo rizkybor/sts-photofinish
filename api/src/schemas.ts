@@ -12,7 +12,7 @@ export type Role = z.infer<typeof Role>;
 
 // ---------- sts-timingsystem → API (ditandatangani HMAC) ----------
 
-/** Dikirim di `onFinish` serialPortMixin.js untuk setiap impuls RaceTime2. */
+/** Dikirim di `onFinish` serialPortMixin.js untuk setiap sinyal RaceTime2. */
 export const TimingImpulse = z.object({
   type: z.literal("timing:impulse"),
   /** UUID acak per start aplikasi timing — seq di-reset saat aplikasi restart. */
@@ -205,7 +205,7 @@ export const CrossingConfirm = z.object({
   secondCrossing: z.boolean().default(false),
   /** Wajib bila mengubah hasil yang sudah dikonfirmasi. */
   reason: z.string().max(500).optional(),
-  /** Hanya bila timeSource null (tanpa impuls & jam tidak sinkron). */
+  /** Hanya bila timeSource null (tanpa sinyal & jam tidak sinkron). */
   manualTime: ClockString.optional(),
 });
 
@@ -221,6 +221,21 @@ export const ClockSettingsUpdate = z.discriminatedUnion("action", [
   z.object({ action: z.literal("trim"), deltaMs: z.number().min(-60_000).max(60_000).refine((v) => v !== 0), reason: z.string().max(500).optional() }),
   z.object({ action: z.literal("reset-trim"), reason: z.string().max(500).optional() }),
 ]);
+
+/** Pengaturan kamera dari halaman Pengaturan Kamera (diterapkan agent saat berjalan). */
+export const CameraConfig = z.object({
+  sourceType: z.enum(["laptop", "iphone", "external", "ip", "video"]),
+  /** Nomor kamera (laptop/iPhone/eksternal), URL (ip), atau path file video uji. Divalidasi ulang oleh agent. */
+  source: z.string().min(1).max(512),
+  fps: z.number().min(1).max(1000),
+  width: z.number().int().min(160).max(7680).nullable().default(null),
+  height: z.number().int().min(120).max(4320).nullable().default(null),
+  /** null = garis tegak otomatis di tengah frame. */
+  finishLine: z.object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() }).nullable(),
+  trigger: z.object({ enabled: z.boolean(), threshold: z.number().min(5).max(150), minRun: z.number().min(0.01).max(0.5) }),
+  frames: z.object({ enabled: z.boolean(), fps: z.number().min(1).max(120), width: z.number().int().min(320).max(3840) }),
+});
+export type CameraConfig = z.infer<typeof CameraConfig>;
 
 export const LoginBody = z.object({
   username: z.string().min(1).max(64),

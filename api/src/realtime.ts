@@ -68,6 +68,32 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
     return [...io.sockets.adapter.rooms.keys()].filter((r) => r.startsWith("preview:")).map((r) => r.slice("preview:".length));
   }
 
+  // ---------------------------------------------------------- pengaturan kamera
+  // cameraId → socket agent + status terakhir yang dilaporkan agent.
+  const cameraStatus = new Map<string, Record<string, unknown>>();
+  function agentSocket(cameraId: string): Socket | undefined {
+    return [...(io.sockets.adapter.rooms.get("agents") ?? [])]
+      .map((id) => io.sockets.sockets.get(id))
+      .find((s) => s?.data.cameraId === cameraId);
+  }
+  async function askAgent(cameraId: string, event: string, data: unknown, timeoutMs: number) {
+    const s = agentSocket(cameraId);
+    if (!s) return { ok: false, offline: true, error: `Agent kamera "${cameraId}" tidak terhubung` };
+    try {
+      return (await s.timeout(timeoutMs).emitWithAck(event, data)) as Record<string, unknown>;
+    } catch {
+      return { ok: false, error: "Agent tidak menjawab (timeout) — kamera mungkin sedang dibuka ulang" };
+    }
+  }
+  const cameras = {
+    connected: (cameraId: string) => !!agentSocket(cameraId),
+    status: (cameraId: string) => cameraStatus.get(cameraId) ?? null,
+    ids: () => [...cameraStatus.keys()],
+    /** Terapkan pengaturan (null = kembali ke .env). Membuka kamera bisa beberapa detik. */
+    applyConfig: (cameraId: string, config: unknown) => askAgent(cameraId, "agent:config", { config }, 25_000),
+    scan: (cameraId: string) => askAgent(cameraId, "agent:scan", {}, 30_000),
+  };
+
   function attach(service: Service) {
     io.on("connection", (socket: Socket) => {
       const p = socket.data.principal as Principal;
@@ -100,6 +126,25 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
           socket.data.cameraId = cameraId;
         }
         socket.join("agents");
+        if (socket.data.cameraId) {
+          const camId = socket.data.cameraId as string;
+          socket.on("agent:status", (st: unknown) => {
+            if (!st || typeof st !== "object") return;
+            const status = { ...(st as Record<string, unknown>), cameraId: camId, connected: true, at: Date.now() };
+            cameraStatus.set(camId, status);
+            io.to("staff").emit("camera:status", status);
+          });
+          socket.on("disconnect", () => {
+            if (agentSocket(camId)) return; // agent lain sudah menggantikan
+            const prev = cameraStatus.get(camId) ?? { cameraId: camId };
+            cameraStatus.set(camId, { ...prev, connected: false, at: Date.now() });
+            io.to("staff").emit("camera:status", cameraStatus.get(camId));
+          });
+          // Pengaturan tersimpan dari web diterapkan begitu agent terhubung.
+          service.getCameraConfig(camId).then((saved) => {
+            if (saved) socket.emit("agent:config", { config: saved.config }, () => undefined);
+          }).catch((err) => console.error("[camera-config]", err));
+        }
         // Ping-pong sinkron jam agent (gaya NTP, agent memilih RTT terkecil).
         socket.on("clock:ping", (_: unknown, ack?: Ack) => ack?.({ ok: true, serverNs: service.serverNowNs().toString() }));
         socket.on("agent:trigger", (raw: unknown, ack?: Ack) => handle(ack, () => service.ingestCameraTrigger(p, AgentTrigger.parse(raw))));
@@ -148,7 +193,7 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
     });
   }
 
-  return { io, bus, attach };
+  return { io, bus, attach, cameras };
 }
 
 async function handle(ack: Ack | undefined, fn: () => Promise<unknown>) {
