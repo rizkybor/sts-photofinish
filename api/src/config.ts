@@ -27,8 +27,8 @@ const Env = z.object({
   PF_DEVICE_TOKEN_TTL: z.string().default("30d"),
   // Aturan FAJI: akurasi 1/100 detik. Cara pembulatan dikonfirmasi ke Chief Judge.
   PF_OFFICIAL_ROUNDING: z.enum(["truncate", "round"]).default("truncate"),
-  // Kelompok finish: impuls dengan jarak <= GROUP_GAP digabung; ekstraksi
-  // dikirim ke agent setelah GROUP_QUIET tanpa impuls baru.
+  // Kelompok finish: sinyal dengan jarak <= GROUP_GAP digabung; ekstraksi
+  // dikirim ke agent setelah GROUP_QUIET tanpa sinyal baru.
   PF_GROUP_GAP_MS: z.coerce.number().int().positive().default(3000),
   PF_GROUP_QUIET_MS: z.coerce.number().int().positive().default(2000),
   PF_CAPTURE_PRE_MS: z.coerce.number().int().nonnegative().default(1500),

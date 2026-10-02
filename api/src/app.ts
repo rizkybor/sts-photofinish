@@ -13,7 +13,7 @@ import type { Database } from "./db.js";
 import { openFile, resolveCapturePath, saveUploadedCapture, verifyFileUrl } from "./files.js";
 import { createRealtime } from "./realtime.js";
 import {
-  CalibrateBody, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, LoginBody, SessionCreate, TimingClock, TimingImpulse,
+  CalibrateBody, CameraConfig, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, LoginBody, SessionCreate, TimingClock, TimingImpulse,
 } from "./schemas.js";
 import { createService, HttpError } from "./service.js";
 
@@ -70,8 +70,9 @@ export async function buildApp(cfg: Config, database: Database) {
   app.get("/api/me", { preHandler: guard.require("viewer") }, async (req) => req.principal);
 
   // ------------------------------------------------------------ sesi
-  app.get("/api/sessions", { preHandler: guard.require("viewer") }, async () =>
-    col.sessions.find().sort({ createdAt: -1 }).limit(100).toArray());
+  app.get("/api/sessions", { preHandler: guard.require("viewer") }, async () => service.sessionList());
+
+  app.get("/api/finishes", { preHandler: guard.require("viewer") }, async () => service.finishFeed());
 
   app.post("/api/sessions", { preHandler: guard.require("operator") }, async (req, reply) =>
     reply.code(201).send(await service.createSession(req.principal!, SessionCreate.parse(req.body))));
@@ -97,7 +98,7 @@ export async function buildApp(cfg: Config, database: Database) {
   app.post("/api/sessions/:id/calibrate", { preHandler: guard.require("operator") }, async (req) =>
     service.calibrate(req.principal!, IdParam.parse(req.params).id, CalibrateBody.parse(req.body)));
 
-  // ------------------------------------------------------------ impuls (HTTP alternatif socket)
+  // ------------------------------------------------------------ sinyal (HTTP alternatif socket)
   app.get("/api/impulses/unassigned", { preHandler: guard.require("operator") }, async () =>
     col.impulses.find({ sessionId: null }).sort({ receivedAt: -1 }).limit(200).toArray());
 
@@ -126,6 +127,53 @@ export async function buildApp(cfg: Config, database: Database) {
 
   app.post("/api/captures", { preHandler: guard.require("device", "agent") }, async (req, reply) =>
     reply.code(201).send(await service.addCapture(req.principal!, CaptureCreate.parse(req.body))));
+
+  // ------------------------------------------------------------ pengaturan kamera
+  const CamParam = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) });
+
+  app.get("/api/cameras", { preHandler: guard.require("operator") }, async () => {
+    const saved = await service.listCameraConfigs();
+    const ids = [...new Set([...realtime.cameras.ids(), ...saved.map((c) => c._id)])].sort();
+    return ids.map((id) => {
+      const doc = saved.find((c) => c._id === id);
+      return {
+        cameraId: id,
+        connected: realtime.cameras.connected(id),
+        status: realtime.cameras.status(id),
+        saved: doc ? { config: doc.config, revision: doc.revision, updatedBy: doc.updatedBy, updatedAt: doc.updatedAt } : null,
+      };
+    });
+  });
+
+  // Terapkan & simpan. Agent online: disimpan hanya bila kamera berhasil dibuka
+  // (gagal → agent kembali ke pengaturan lama, tidak disimpan). Agent offline:
+  // disimpan sebagai tertunda dan diterapkan saat agent terhubung.
+  app.put("/api/cameras/:id/config", { preHandler: guard.require("operator") }, async (req, reply) => {
+    const { id } = CamParam.parse(req.params);
+    const config = CameraConfig.parse(req.body);
+    if (!realtime.cameras.connected(id)) {
+      await service.saveCameraConfig(req.principal!, id, config, "disimpan saat agent offline");
+      return { applied: false, pending: true, message: "Agent tidak terhubung — pengaturan disimpan dan diterapkan saat agent terhubung" };
+    }
+    const res = await realtime.cameras.applyConfig(id, config);
+    if (!res.ok) return reply.code(422).send({ applied: false, error: res.error ?? "Agent gagal menerapkan pengaturan", status: res.status ?? null });
+    await service.saveCameraConfig(req.principal!, id, config, "diterapkan");
+    return { applied: true, status: res.status ?? null };
+  });
+
+  app.delete("/api/cameras/:id/config", { preHandler: guard.require("operator") }, async (req) => {
+    const { id } = CamParam.parse(req.params);
+    await service.deleteCameraConfig(req.principal!, id);
+    const res = realtime.cameras.connected(id) ? await realtime.cameras.applyConfig(id, null) : { ok: true, offline: true };
+    return { reset: true, applied: !!res.ok, error: res.error ?? null };
+  });
+
+  app.post("/api/cameras/:id/scan", { preHandler: guard.require("operator") }, async (req, reply) => {
+    const { id } = CamParam.parse(req.params);
+    const res = await realtime.cameras.scan(id);
+    if (!res.ok) return reply.code(res.offline ? 409 : 504).send({ error: res.error });
+    return res;
+  });
 
   // ------------------------------------------------------------ tangkapan (kelompok finish)
   // Unggah file rekaman dari agent jarak jauh (API di VPS, agent di lokasi).

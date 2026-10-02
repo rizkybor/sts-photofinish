@@ -97,7 +97,7 @@ const ruler = computed(() => {
   return { ticks };
 });
 
-/** Posisi impuls RaceTime2 di gambar (kolom pertama yang waktunya ≥ impuls). */
+/** Posisi sinyal RaceTime2 di gambar (kolom pertama yang waktunya ≥ sinyal). */
 const impulseMarks = computed(() => {
   if (!colMs.value.absolute || !props.impulses) return [];
   const ms = colMs.value.ms;
@@ -134,7 +134,7 @@ function onLeave() {
     >
       <img :src="capture.url" :class="{ pixel: smooth === false }" :style="{ width: width + 'px', height: capture.height * zy + 'px' }" alt="Slit-scan garis finish" draggable="false" />
       <div v-if="focusColumn != null" class="focus" :style="{ left: (focusColumn + 0.5) * zx + 'px' }" title="Posisi foto frame" />
-      <div v-for="m in impulseMarks" :key="'i' + m.n" class="impulse" :class="{ cam: m.camera }" :style="{ left: m.x + 'px' }" :title="m.camera ? `Pemicu kamera ${m.n}` : `Impuls RaceTime2 ${m.n}`">
+      <div v-for="m in impulseMarks" :key="'i' + m.n" class="impulse" :class="{ cam: m.camera }" :style="{ left: m.x + 'px' }" :title="m.camera ? `Pemicu kamera ${m.n}` : `Sinyal RaceTime2 ${m.n}`">
         <span class="impulse-tag">{{ m.n }}</span>
       </div>
       <div v-for="c in crossings" :key="c._id" class="marker" :class="{ confirmed: c.status === 'confirmed' }" :style="{ left: c.column * zx + 'px', width: Math.max(2, zx) + 'px' }">

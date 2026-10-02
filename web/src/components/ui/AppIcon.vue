@@ -41,11 +41,24 @@ import water from "@iconify-icons/ic/baseline-water";
 import wifi from "@iconify-icons/ic/baseline-wifi";
 import wifiOff from "@iconify-icons/ic/baseline-wifi-off";
 import zoom from "@iconify-icons/ic/baseline-zoom-in";
+import laptop from "@iconify-icons/ic/baseline-laptop-mac";
+import iphone from "@iconify-icons/ic/baseline-phone-iphone";
+import usb from "@iconify-icons/ic/baseline-usb";
+import ipcam from "@iconify-icons/ic/baseline-wifi-tethering";
+import movie from "@iconify-icons/ic/baseline-movie";
+import settings from "@iconify-icons/ic/baseline-settings";
+import restart from "@iconify-icons/ic/baseline-restart-alt";
+import save from "@iconify-icons/ic/baseline-save";
+import volume from "@iconify-icons/ic/baseline-volume-up";
+import volumeOff from "@iconify-icons/ic/baseline-volume-off";
+import compare from "@iconify-icons/ic/baseline-compare";
+import skipNext from "@iconify-icons/ic/baseline-skip-next";
 
 const ICONS = {
   add, arrowBack, camera, check, chevron, close, del, doneAll, down, edit, error, finish, focus, grid, groups, history,
   info, level, lock, logout, pending, person, play, refresh, ruler, search, sensors, stop, target, timer, touch, tune,
   vertical, verified, warning, water, wifi, wifiOff, zoom,
+  laptop, iphone, usb, ipcam, movie, settings, restart, save, volume, volumeOff, compare, skipNext,
 } as const;
 export type IconName = keyof typeof ICONS;
 

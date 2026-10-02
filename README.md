@@ -4,7 +4,7 @@ Photo finish berbasis web untuk lomba arung jeram & kayak FAJI, terhubung ke
 **sts-timingsystem**. Satu kamera di tepi sungai menentukan **urutan** perahu,
 impuls RaceTime2 menentukan **waktu**. Fokus: H2H, Rafting Cross, DRR.
 
-- **Deploy & menjalankan (lokal / production): [docs/PANDUAN-DEPLOY.md](docs/PANDUAN-DEPLOY.md)**
+- **Panduan menggunakan (A. Lokal / B. Production): [docs/PANDUAN-DEPLOY.md](docs/PANDUAN-DEPLOY.md)**
 - Deploy ke VPS (domain + HTTPS, agent di lokasi): [docs/PANDUAN-VPS.md](docs/PANDUAN-VPS.md)
 - Arsitektur & keputusan desain: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Integrasi ke timing system: [docs/INTEGRATION-TIMING.md](docs/INTEGRATION-TIMING.md)
@@ -22,11 +22,13 @@ Semua berjalan native di laptop lapangan, tanpa Docker dan tanpa internet.
 
 ```bash
 npm run setup                      # sekali: dependensi, .env, build
+npm run dev:local                  # uji lokal: semua sekaligus → http://localhost:5173
 npm run build && npm run prod:start  # production → http://<ip-laptop>:4100
 ```
 
-Mode lokal (dev), konfigurasi kamera, akun, koneksi ke sts-timingsystem, dan
-prosedur hari lomba: lihat **[docs/PANDUAN-DEPLOY.md](docs/PANDUAN-DEPLOY.md)**.
+Persiapan, **A. Lokal** (uji coba di satu laptop), dan **B. Production**
+(laptop lokasi / VPS, termasuk cara menggunakan saat lomba): lihat
+**[docs/PANDUAN-DEPLOY.md](docs/PANDUAN-DEPLOY.md)**.
 
 ## Peran
 

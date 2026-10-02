@@ -176,7 +176,7 @@ def test_mode_vps_mengunggah_semua_file_rekaman(tmp_path):
 
     cfg = AgentConfig.from_env({"PF_DEVICE_TOKEN": "t", "PF_FINISH_LINE": "60,0,60,39", "PF_CAPTURES_DIR": str(tmp_path), "PF_UPLOAD_CAPTURES": "on"})
     assert cfg.upload_captures is True
-    client = AgentClient(cfg, ring)
+    client = AgentClient(cfg)
     sent = []
 
     class FakeResp:

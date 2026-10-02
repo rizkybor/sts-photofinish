@@ -85,7 +85,7 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   const { data: session } = await http("POST", "/api/sessions", op, { eventId: "E1", bucket, raceCategory: "H2H", label: "H2H", lanes: [{ lane: "A", teamId: "T-A", bib: "7" }] });
   await http("POST", `/api/sessions/${session._id}/arm`, op);
 
-  // Klien timing — impuls dikirim SEBELUM terhubung → harus antre di outbox
+  // Klien timing — sinyal dikirim SEBELUM terhubung → harus antre di outbox
   const saved: Record<string, unknown> = {};
   const received: any[] = [];
   const statuses: any[] = [];
@@ -111,7 +111,7 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   client.start();
   await until(() => client.status().connected && client.status().outbox === 0);
   const imp = await database.col.impulses.findOne({ sessionId: new ObjectId(session._id) });
-  assert.ok(imp, "impuls dari klien timing tersimpan");
+  assert.ok(imp, "sinyal dari klien timing tersimpan");
   assert.equal(imp!.timeBasis, "pf-clock");
   assert.equal(imp!.serialLatencyNs, latency);
   assert.equal(imp!.hostNs, hostNs);

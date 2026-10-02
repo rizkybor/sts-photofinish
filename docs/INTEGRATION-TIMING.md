@@ -24,14 +24,14 @@ RaceTime2 ──serial──▶ microGateReader.js ──(waktu terima, panjang 
 RaceTime2 di lapangan mengirim frame **"bare"** (19 digit + marker, tanpa
 payload waktu; lihat `microGateReader.js`). Akibatnya:
 
-- Impuls dikirim **tanpa `deviceTime`**. API mencapnya dengan **jam Photo
+- Sinyal dikirim **tanpa `deviceTime`**. API mencapnya dengan **jam Photo
   Finish** pada `hostNs`, yaitu waktu terima frame dikurangi waktu transmisi
   serial (20 byte × 10 bit ÷ 1200 baud ≈ 167 ms, field `serialLatencyNs`).
 - Agar waktu itu sama dengan tampilan RaceTime2, **admin mengkalibrasi jam
   PF** (Set ke waktu + Trim) sebelum lomba, lalu operator melakukan
   **kalibrasi kamera** per sesi. Sebelum dikalibrasi, jam PF = jam laptop.
 - Kalau suatu saat RaceTime2 mengirim frame **berisi waktu**, frame itu
-  otomatis dipakai: waktu impuls dari perangkat dan heartbeat untuk mode jam
+  otomatis dipakai: waktu sinyal dari perangkat dan heartbeat untuk mode jam
   "auto". Tidak perlu perubahan kode.
 - Frame START bare **tidak** dikirim (belum dipastikan per-tekan atau terus-menerus).
 
@@ -39,11 +39,11 @@ payload waktu; lihat `microGateReader.js`). Akibatnya:
 
 | File | Peran |
 |---|---|
-| `src/services/photofinishCore.js` | Klien murni: antrean impuls (persist), HMAC, sinkron jam, terima hasil (persist), status. Diuji interop dari repo ini |
+| `src/services/photofinishCore.js` | Klien murni: antrean sinyal (persist), HMAC, sinkron jam, terima hasil (persist), status. Diuji interop dari repo ini |
 | `src/services/photofinishMain.js` | Wiring Electron main: konfigurasi, penyimpanan di `userData`, IPC |
 | `src/services/photofinish.js` | Renderer: `reportFrame()`, `onVerified()`, `markApplied()`, status |
 | `src/utils/microGateReader.js` | + argumen ke-4 `meta = { recvUs, frameBytes }` untuk callback |
-| `src/mixins/serialPortMixin.js` | `onFinish`/`onLap` → impuls; `onStart` berwaktu → heartbeat |
+| `src/mixins/serialPortMixin.js` | `onFinish`/`onLap` → sinyal; `onStart` berwaktu → heartbeat |
 | `src/mixins/photofinishMixin.js` | Menerapkan hasil ke view (cek kategori + bucket, konfirmasi bila menimpa) |
 | `src/components/photofinish/PhotofinishBadge.vue` | Status koneksi / antrean / hasil menunggu |
 | `src/components/photofinish/PhotofinishBar.vue` | Badge + tombol & modal **Kirim heat ke Photo Finish** |
@@ -113,7 +113,7 @@ npm run test:interop -w api   # menjalankan photofinishCore.js milik sts-timings
 - [ ] Badge "Photo Finish terhubung" muncul di halaman H2H/RX/DRR
 - [ ] Admin: jam PF di-set sama dengan tampilan RaceTime2, Δ dipantau
 - [ ] Kalibrasi kamera: satu perahu melintas → Kalibrasi kamera → klik haluan
-- [ ] H2H: dua perahu berdekatan → satu kelompok finish berisi dua impuls
+- [ ] H2H: dua perahu berdekatan → satu kelompok finish berisi dua sinyal
 - [ ] Konfirmasi juri → Finish Time terisi di H2H tanpa klik "BIB Finish"
-- [ ] Cabut Wi-Fi saat finish → badge "impuls antre" → terkirim setelah tersambung
+- [ ] Cabut Wi-Fi saat finish → badge "sinyal antre" → terkirim setelah tersambung
 - [ ] Tutup aplikasi timing sebelum hasil diterapkan → buka lagi → hasil tetap masuk

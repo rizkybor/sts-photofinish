@@ -15,8 +15,10 @@ import socketio
 from .clock import OffsetEstimator, now_ns
 from .config import AgentConfig
 from .extract import ClockSnapshot, ExtractResult, extract
+from .pipeline import LatestFrame, Pipeline  # noqa: F401 — LatestFrame diekspor ulang untuk kompatibilitas
 from .preview import encode_preview
-from .ringbuffer import LineRing
+from .scan import scan as scan_cameras
+from .settings import CameraSettings
 
 log = logging.getLogger(__name__)
 
@@ -27,30 +29,14 @@ SYNC_BURST = 4
 WAIT_FOR_FRAMES_S = 10.0
 
 
-class LatestFrame:
-    """Frame terakhir dari kamera (untuk cuplikan standby), aman antar-thread."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._ts = 0
-        self._frame = None
-
-    def set(self, ts: int, frame) -> None:
-        with self._lock:
-            self._ts, self._frame = ts, frame
-
-    def get(self):
-        with self._lock:
-            return self._ts, self._frame
-
-
 class AgentClient:
-    def __init__(self, cfg: AgentConfig, ring: LineRing, latest: LatestFrame | None = None, camera=None, archive=None) -> None:
+    def __init__(self, cfg: AgentConfig, pipeline: Pipeline | None = None, env_settings: CameraSettings | None = None) -> None:
         self.cfg = cfg
-        self.ring = ring
-        self.latest = latest
-        self.camera = camera
-        self.archive = archive
+        self.pipeline = pipeline
+        # Pengaturan dari .env — dipakai lagi bila pengaturan web dihapus ("kembalikan ke .env").
+        self.env_settings = env_settings or (pipeline.settings if pipeline else None)
+        if pipeline is not None:
+            pipeline.on_trigger = self.report_trigger
         self._preview_on = threading.Event()
         self._triggers: queue.Queue[int] = queue.Queue(maxsize=100)
         self._boot = str(uuid.uuid4())
@@ -59,11 +45,13 @@ class AgentClient:
         self.sio = socketio.Client(reconnection=True, reconnection_delay_max=5)
         self.http = httpx.Client(base_url=cfg.api_url, headers={"authorization": f"Bearer {cfg.device_token}"}, timeout=10)
         self._stop = threading.Event()
-        self.sio.on("connect", lambda: log.info("Terhubung ke API %s", cfg.api_url))
+        self.sio.on("connect", self._on_connect)
         self.sio.on("disconnect", lambda *_: log.warning("Terputus dari API — mencoba lagi"))
         self.sio.on("agent:extract", self._on_extract)
         self.sio.on("agent:preview", self._on_preview)
         self.sio.on("agent:rejected", self._on_rejected)
+        self.sio.on("agent:config", self._on_config)
+        self.sio.on("agent:scan", self._on_scan)
         self.rejected: str | None = None
 
     def run(self) -> None:
@@ -103,6 +91,9 @@ class AgentClient:
                 if self.clock.ready:
                     best = self.clock.best()
                     log.debug("offset=%.3f ms rtt=%.3f ms", best.offset_ns / 1e6, best.rtt_ns / 1e6)
+                # Status berkala: fps terukur terbaru, dan cadangan bila status saat
+                # connect terlewat (python-socketio belum "connected" di handler connect).
+                self._send_status()
             self._stop.wait(SYNC_INTERVAL_S)
 
     # ------------------------------------------------------------ photocell virtual
@@ -137,6 +128,43 @@ class AgentClient:
             except Exception as err:  # noqa: BLE001
                 log.warning("Pemicu kamera gagal terkirim: %s", err)
 
+    # ------------------------------------------------------------ pengaturan kamera dari web
+
+    def _on_connect(self) -> None:
+        # Satu handler per event di python-socketio — log + status di sini.
+        log.info("Terhubung ke API %s", self.cfg.api_url)
+        self._send_status()
+
+    def _send_status(self) -> None:
+        if self.pipeline is None or not self.sio.connected:
+            return
+        try:
+            self.sio.emit("agent:status", {"cameraId": self.cfg.camera_id, **self.pipeline.status()})
+        except Exception as err:  # noqa: BLE001
+            log.debug("status gagal dikirim: %s", err)
+
+    def _on_config(self, data: dict) -> dict:
+        """Terapkan pengaturan dari web (None = kembali ke .env). Balasan = ack ke API."""
+        if self.pipeline is None:
+            return {"ok": False, "error": "Agent berjalan tanpa kamera"}
+        cfg = (data or {}).get("config")
+        try:
+            base = self.env_settings
+            new = base.merged(cfg, self.cfg.buffer_seconds) if cfg else base
+        except (ValueError, KeyError, TypeError) as err:
+            return {"ok": False, "error": f"Pengaturan tidak valid: {err}"}
+        log.info("Menerapkan pengaturan kamera dari web: %s", "kembali ke .env" if not cfg else new.source_type)
+        ok, error = self.pipeline.reconfigure(new)
+        self._send_status()
+        return {"ok": ok, "error": error, "status": self.pipeline.status()}
+
+    def _on_scan(self, _data: dict | None = None) -> dict:
+        """Pindai kamera yang terpasang (kamera yang sedang dipakai tidak dibuka ulang)."""
+        pipe = self.pipeline
+        in_use = pipe.settings.source if pipe and pipe.settings.source.isdigit() else None
+        result = scan_cameras(in_use, pipe.size if pipe else None)
+        return {"ok": True, **result}
+
     # ------------------------------------------------------------ cuplikan standby
 
     def _on_preview(self, req: dict) -> None:
@@ -151,18 +179,18 @@ class AgentClient:
 
     def _preview_loop(self) -> None:
         while not self._stop.is_set():
-            if not self._preview_on.wait(timeout=1.0) or self.latest is None or not self.sio.connected:
+            if not self._preview_on.wait(timeout=1.0) or self.pipeline is None or not self.sio.connected:
                 continue
-            ts, frame = self.latest.get()
+            ts, frame = self.pipeline.latest.get()
             if frame is not None:
                 try:
-                    line = self.cfg.finish_line
+                    line = self.pipeline.finish_line or self.cfg.finish_line
                     self.sio.emit("agent:preview-frame", {
                         "cameraId": self.cfg.camera_id,
                         "agentNs": str(ts),
                         "width": int(frame.shape[1]),
                         "height": int(frame.shape[0]),
-                        "fps": round(getattr(self.camera, "measured_fps", 0.0), 1),
+                        "fps": round(getattr(self.pipeline.camera, "measured_fps", 0.0), 1),
                         "finishLine": {"x1": line.x1, "y1": line.y1, "x2": line.x2, "y2": line.y2},
                         "jpeg": encode_preview(frame),
                     })
@@ -186,21 +214,23 @@ class AgentClient:
             from_ns = self.clock.host_to_agent(int(req["fromHostNs"]))
             to_ns = self.clock.host_to_agent(int(req["toHostNs"]))
 
+            pipe = self.pipeline
+            ring, archive = pipe.ring, pipe.archive
             deadline = time.monotonic() + WAIT_FOR_FRAMES_S
-            while (self.ring.latest_ns or 0) < to_ns and time.monotonic() < deadline:
+            while (ring.latest_ns or 0) < to_ns and time.monotonic() < deadline:
                 time.sleep(0.05)
-            oldest = self.ring.oldest_ns
+            oldest = ring.oldest_ns
             if oldest is not None and oldest > from_ns:
                 log.warning("Buffer tidak mencakup awal jendela (kurang %.0f ms) — naikkan PF_BUFFER_SECONDS", (oldest - from_ns) / 1e6)
 
             frames = None
-            if self.archive is not None:
-                self.archive.flush()
-                frames = self.archive.window(from_ns, to_ns)
+            if archive is not None:
+                archive.flush()
+                frames = archive.window(from_ns, to_ns)
             result = extract(
-                self.ring, from_ns, to_ns, self.cfg.captures_dir, req["sessionId"], req["groupId"], self.cfg.camera_id,
+                ring, from_ns, to_ns, self.cfg.captures_dir, req["sessionId"], req["groupId"], self.cfg.camera_id,
                 clock=ClockSnapshot.from_request(req.get("clock")), agent_offset_ns=best.offset_ns,
-                frames=frames, frame_scale=self.archive.scale if self.archive else 1.0, finish_line=self.cfg.finish_line,
+                frames=frames, frame_scale=archive.scale if archive else 1.0, finish_line=pipe.finish_line,
             )
             self._post_capture(req["groupId"], result, best.offset_ns, best.rtt_ns)
             log.info("Capture %s terkirim (%d kolom, %.0f fps, %d frame utuh)", req["groupId"], result.width, result.fps, result.frame_count)

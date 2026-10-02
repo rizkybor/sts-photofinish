@@ -29,7 +29,7 @@ berbeda, atau lokasi lomba dengan internet stabil.
 
 | Hal | Dampak |
 |---|---|
-| **Butuh internet di lokasi** | Tanpa internet, impuls tetap antre di sts-timingsystem, tetapi rekaman kamera tidak bisa diunggah, sehingga tinjauan tertunda |
+| **Butuh internet di lokasi** | Tanpa internet, sinyal tetap antre di sts-timingsystem, tetapi rekaman kamera tidak bisa diunggah, sehingga tinjauan tertunda |
 | **Jeda internet tidak stabil** | Jam agent disinkronkan ke VPS lewat internet (sampel jeda terkecil dipakai). Ketelitian lebih rendah daripada LAN. Lakukan **Kalibrasi kamera** di setiap sesi |
 | **Upload rekaman** | Satu tangkapan ≈ 2–25 MB (slit-scan + foto frame). Di koneksi seluler, turunkan `PF_FRAMES_FPS` / `PF_FRAMES_WIDTH`, atau `PF_FRAMES=off` |
 | **Data atlet di internet** | Wajib HTTPS, password kuat, dan firewall (bagian 9) |
@@ -197,14 +197,14 @@ Gunakan password kuat (≥ 12 karakter), karena server ini bisa diakses dari int
 
 ### 8.1 Laptop kamera (agent)
 
-Di laptop lokasi, siapkan repo seperti [PANDUAN-DEPLOY.md §3](PANDUAN-DEPLOY.md),
+Di laptop lokasi, siapkan repo seperti [PANDUAN-DEPLOY.md bagian 0](PANDUAN-DEPLOY.md),
 lalu ubah `.env` laptop tersebut:
 
 ```
 PF_API_URL=https://pf.domain-anda.id
 PF_DEVICE_TOKEN=<token agent dari VPS>
 PF_UPLOAD_CAPTURES=on              # rekaman diunggah ke VPS
-PF_CAMERA_SOURCE=0                 # sesuaikan kamera (PANDUAN-DEPLOY §3.2)
+PF_CAMERA_SOURCE=0                 # sesuaikan kamera (PANDUAN-DEPLOY bagian 0.5)
 PF_CAMERA_FPS=30
 PF_FINISH_LINE=960,0,960,1079
 PF_TRIGGER=camera
@@ -217,7 +217,7 @@ Jalankan **hanya agent** (laptop ini tidak menjalankan API/MongoDB):
 
 ```bash
 cd ~/Sites/sts-photofinish/agent
-set -a && source ../.env && set +a
+source ../scripts/lib-env.sh && load_env ../.env
 .venv/bin/pf-agent -v
 ```
 
@@ -228,7 +228,7 @@ tersimpan di laptop (`data/captures`) sebagai cadangan.
 ### 8.2 sts-timingsystem
 
 `app/.env` (mode dev) atau `photofinish.json` (aplikasi terpasang, lihat
-[PANDUAN-DEPLOY.md §5](PANDUAN-DEPLOY.md)):
+[PANDUAN-DEPLOY.md bagian 0.7](PANDUAN-DEPLOY.md)):
 
 ```
 PF_API_URL=https://pf.domain-anda.id
@@ -299,7 +299,7 @@ Jangan memperbarui di tengah lomba.
 | Agent: `Gagal mengunggah …` | Internet lokasi putus. Agent mencoba 3×. Rekaman tetap ada di laptop lokasi |
 | Agent: `File capture tidak ditemukan` | `PF_UPLOAD_CAPTURES` belum `on` di laptop kamera |
 | Agent/timing: `Unauthorized` | Token dibuat dengan `PF_JWT_SECRET` lain, atau sudah kedaluwarsa. Buat ulang di VPS |
-| Timing: impuls/hasil ditolak (HMAC) | `PF_HMAC_SECRET` di timing ≠ di VPS |
+| Timing: sinyal/hasil ditolak (HMAC) | `PF_HMAC_SECRET` di timing ≠ di VPS |
 | Semua orang terkena "terlalu banyak percobaan login" | `PF_TRUST_PROXY=true` belum diset, lalu `npm run prod:restart` |
 | Sertifikat HTTPS gagal | DNS belum mengarah ke IP VPS, atau port 80 diblokir firewall |
 | Waktu rekaman kurang presisi | Jeda internet. Lakukan Kalibrasi kamera di setiap sesi. Untuk lomba resmi gunakan mode LAN |

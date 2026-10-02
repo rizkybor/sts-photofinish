@@ -9,7 +9,7 @@ import { fileSha256, readColumns, readFramesIndex, resolveCapturePath, signFileU
 import { findTies, pairByOrder } from "./pairing.js";
 import type { z } from "zod";
 import { AgentTrigger, TimingSessionRequest } from "./schemas.js";
-import type { CalibrateBody, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
+import type { CalibrateBody, CameraConfig, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
 import {
   deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, NS_PER_SEC, nowEpochNs, officialClock, parseClock, toNs, wrapDay,
 } from "./time.js";
@@ -78,7 +78,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     return (BigInt(new Date().getTimezoneOffset()) * 60n * NS_PER_SEC).toString();
   }
 
-  /** `autoOffset` bisa diisi snapshot impuls agar satu kelompok konsisten. */
+  /** `autoOffset` bisa diisi snapshot sinyal agar satu kelompok konsisten. */
   async function effectiveClock(autoOffset?: string | null): Promise<ClockSnapshot> {
     const s = await clockSettings();
     let base: string | null;
@@ -175,7 +175,31 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     return status;
   }
 
-  // ---------------------------------------------------------------- impuls
+  // ---------------------------------------------------------------- pengaturan kamera
+
+  async function getCameraConfig(cameraId: string) {
+    return col.cameraConfigs.findOne({ _id: cameraId });
+  }
+
+  async function listCameraConfigs() {
+    return col.cameraConfigs.find().toArray();
+  }
+
+  async function saveCameraConfig(p: Principal, cameraId: string, config: CameraConfig, note: string) {
+    const before = await col.cameraConfigs.findOne({ _id: cameraId });
+    const doc = { _id: cameraId, config, revision: (before?.revision ?? 0) + 1, updatedBy: p.sub, updatedAt: new Date() };
+    await col.cameraConfigs.replaceOne({ _id: cameraId }, doc, { upsert: true });
+    await audit.append({ userId: p.sub, action: "camera.config", entity: "camera", entityId: cameraId, before: before?.config ?? null, after: config, reason: note });
+    return doc;
+  }
+
+  async function deleteCameraConfig(p: Principal, cameraId: string) {
+    const before = await col.cameraConfigs.findOne({ _id: cameraId });
+    await col.cameraConfigs.deleteOne({ _id: cameraId });
+    await audit.append({ userId: p.sub, action: "camera.config.reset", entity: "camera", entityId: cameraId, before: before?.config ?? null, after: null, reason: "kembali ke pengaturan .env agent" });
+  }
+
+  // ---------------------------------------------------------------- sinyal
 
   async function ingestImpulse(msg: TimingImpulse): Promise<ImpulseDoc> {
     if (!verifyPayload(msg, cfg.PF_HMAC_SECRET)) throw new HttpError(401, "Tanda tangan HMAC tidak valid");
@@ -211,7 +235,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       pfClockRevision,
       serialLatencyNs: msg.serialLatencyNs ?? null,
       hostNs: msg.hostNs,
-      // Relasi RaceTime2↔host hanya terukur bila impuls membawa waktu perangkat.
+      // Relasi RaceTime2↔host hanya terukur bila sinyal membawa waktu perangkat.
       deviceOffsetNs: msg.deviceTime && clock?.bootId === msg.bootId ? clock.deviceOffsetNs : null,
       receivedAt: new Date(),
     };
@@ -234,7 +258,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   /**
    * Pemicu photocell virtual dari agent. Hanya diterima bila ada sesi AKTIF
    * dengan kamera yang sama (tidak membanjiri data saat orang lalu-lalang di
-   * luar heat). Masuk ke kelompok finish seperti impuls biasa sehingga memicu
+   * luar heat). Masuk ke kelompok finish seperti sinyal biasa sehingga memicu
    * rekaman, tetapi TIDAK dipakai sebagai waktu resmi (lihat repairGroup).
    */
   async function ingestCameraTrigger(p: Principal, data: z.infer<typeof AgentTrigger>) {
@@ -272,8 +296,8 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
 
   async function assignImpulse(p: Principal, impulseId: string, sessionId: string) {
     const imp = await col.impulses.findOne({ _id: oid(impulseId, "impulseId") });
-    if (!imp) throw new HttpError(404, "Impuls tidak ditemukan");
-    if (imp.sessionId) throw new HttpError(409, "Impuls sudah masuk sesi lain");
+    if (!imp) throw new HttpError(404, "Sinyal tidak ditemukan");
+    if (imp.sessionId) throw new HttpError(409, "Sinyal sudah masuk sesi lain");
     const session = await getOpenSession(sessionId);
     await col.impulses.updateOne({ _id: imp._id }, { $set: { sessionId: session._id } });
     await audit.append({ userId: p.sub, action: "impulse.assign", entity: "impulse", entityId: impulseId, before: { sessionId: null }, after: { sessionId }, reason: null });
@@ -298,6 +322,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     }
     await col.impulses.updateOne({ _id: imp._id }, { $set: { groupId: group._id } });
     bus.toSession(session._id.toHexString(), "impulse:new", serializeImpulse({ ...imp, groupId: group._id }));
+    changed(session._id);
     scheduleExtraction(group._id);
   }
 
@@ -322,7 +347,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     const autoOffset = await impulseAutoOffset(group);
     const clock = group.clock ?? (await effectiveClock(autoOffset));
 
-    // Posisi impuls di jam host: pakai relasi RaceTime2↔host yang terukur
+    // Posisi sinyal di jam host: pakai relasi RaceTime2↔host yang terukur
     // (auto) bila ada; tanpa itu pakai jam PF; tanpa keduanya pakai waktu
     // terima host (telat ±250 ms di 1200 baud) — jendela ekstraksi cukup lebar.
     const offset = autoOffset ?? clock.effectiveOffsetNs;
@@ -350,6 +375,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     const warnings = sent ? [] : ["Capture Agent tidak terhubung — rekaman belum diambil."];
     await col.groups.updateOne({ _id: groupId }, { $set: { status: "extracting", extractRequestedAt: new Date(), warnings, clock } });
     bus.toSession(req.sessionId, "group:updated", { groupId: req.groupId, status: "extracting", warnings });
+    bus.toStaff("sessions:changed", { sessionId: req.sessionId });
   }
 
   /** Dipanggil saat startup & saat agent terhubung: kelompok yang tertunda diekstrak. */
@@ -370,23 +396,28 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     return s;
   }
 
+  /** Daftar sesi (bar perpindahan heat) di semua layar staf ikut diperbarui. */
+  const changed = (sessionId: ObjectId) => bus.toStaff("sessions:changed", { sessionId: sessionId.toHexString() });
+
   async function createSession(p: Principal, body: z.infer<typeof SessionCreate>) {
     const doc: SessionDoc = {
       _id: new ObjectId(), ...body, armed: false, status: "open", calibrationOffsetNs: "0", calibratedAt: null,
       createdBy: p.sub, createdAt: new Date(),
     };
     await col.sessions.insertOne(doc);
+    changed(doc._id);
     await audit.append({ userId: p.sub, action: "session.create", entity: "session", entityId: doc._id.toHexString(), before: null, after: doc, reason: null });
     return doc;
   }
 
   async function armSession(p: Principal, id: string, armed: boolean) {
     const s = await getOpenSession(id);
-    // Hanya satu sesi yang menerima impuls pada satu waktu (satu garis finish).
+    // Hanya satu sesi yang menerima sinyal pada satu waktu (satu garis finish).
     if (armed) await col.sessions.updateMany({ armed: true }, { $set: { armed: false } });
     await col.sessions.updateOne({ _id: s._id }, { $set: { armed } });
     await audit.append({ userId: p.sub, action: armed ? "session.arm" : "session.disarm", entity: "session", entityId: id, before: { armed: s.armed }, after: { armed }, reason: null });
     bus.toStaff("session:armed", { sessionId: armed ? id : null });
+    changed(s._id);
   }
 
   /**
@@ -419,7 +450,76 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   async function closeSession(p: Principal, id: string) {
     const s = await getOpenSession(id);
     await col.sessions.updateOne({ _id: s._id }, { $set: { status: "closed", armed: false } });
+    changed(s._id);
     await audit.append({ userId: p.sub, action: "session.close", entity: "session", entityId: id, before: { status: s.status }, after: { status: "closed" }, reason: null });
+  }
+
+  /**
+   * Ringkasan satu kejadian finish (kelompok). Operator standby di kamera dan
+   * hanya perlu masuk ke detail bila finish BERDEKATAN (≥ 2 perahu dalam satu
+   * kelompok) — berlaku sama untuk H2H, RX, DRR, Sprint, Slalom. Finish satu
+   * perahu cukup tercatat: waktunya langsung dari RaceTime2.
+   * Jumlah perahu = maks(sinyal RaceTime2, pemicu kamera) agar satu perahu yang
+   * memicu keduanya tidak dihitung dua.
+   */
+  async function finishStates(groups: GroupDoc[]) {
+    const ids = groups.map((g) => g._id);
+    const [imps, crs] = await Promise.all([
+      col.impulses.find({ groupId: { $in: ids } }, { projection: { groupId: 1, source: 1, deviceTimeNs: 1 } }).toArray(),
+      col.crossings.find({ groupId: { $in: ids } }, { projection: { groupId: 1, status: 1 } }).toArray(),
+    ]);
+    return new Map(groups.map((g) => {
+      const key = g._id.toHexString();
+      const mine = imps.filter((i) => String(i.groupId) === key);
+      const rt = mine.filter((i) => i.source !== "camera"), cam = mine.filter((i) => i.source === "camera");
+      const basis = rt.length >= cam.length ? rt : cam;
+      const times = basis.map((i) => BigInt(i.deviceTimeNs));
+      const gapMs = times.length > 1 ? Number((times.reduce((m, t) => (t > m ? t : m)) - times.reduce((m, t) => (t < m ? t : m))) / NS_PER_MS) : null;
+      const boats = basis.length;
+      const cs = crs.filter((c) => String(c.groupId) === key);
+      const marked = cs.length, confirmed = cs.filter((c) => c.status === "confirmed").length;
+      const close = boats >= 2;
+      const needsReview = g.status === "ready" && ((close && (marked < boats || confirmed < marked)) || confirmed < marked);
+      return [key, { boats, gapMs, close, marked, confirmed, needsReview, resolved: close && !needsReview && g.status === "ready" }];
+    }));
+  }
+
+  /**
+   * Daftar sesi + progres, untuk perpindahan heat cepat: operator melihat heat
+   * mana yang masih punya finish berdekatan belum ditinjau tanpa membuka satu per satu.
+   */
+  async function sessionList() {
+    const sessions = await col.sessions.find().sort({ createdAt: -1 }).limit(100).toArray();
+    const groups = await col.groups.find({ sessionId: { $in: sessions.filter((s) => s.status === "open").map((s) => s._id) } }).toArray();
+    const states = await finishStates(groups);
+    return sessions.map((s) => {
+      const mine = groups.filter((g) => g.sessionId.equals(s._id));
+      const st = mine.map((g) => states.get(g._id.toHexString())!);
+      return {
+        ...s,
+        progress: {
+          finishes: mine.length,
+          recording: mine.filter((g) => g.status !== "ready").length,
+          close: st.filter((x) => x.close).length,
+          pending: st.filter((x) => x.needsReview).length,
+          confirmed: st.reduce((n, x) => n + x.confirmed, 0),
+        },
+      };
+    });
+  }
+
+  /** Feed "Finish terakhir" di Standby Kamera: kejadian terbaru dari sesi terbuka. */
+  async function finishFeed(limit = 20) {
+    const open = await col.sessions.find({ status: "open" }, { projection: { label: 1, raceCategory: 1, armed: 1 } }).toArray();
+    const groups = await col.groups.find({ sessionId: { $in: open.map((s) => s._id) } }).sort({ createdAt: -1 }).limit(limit).toArray();
+    const states = await finishStates(groups);
+    return groups.map((g) => {
+      const s = open.find((x) => x._id.equals(g.sessionId))!;
+      return {
+        groupId: g._id.toHexString(), sessionId: s._id.toHexString(), sessionLabel: s.label, raceCategory: s.raceCategory, armed: s.armed,
+        status: g.status, createdAt: g.createdAt, ...states.get(g._id.toHexString())!,
+      };
+    });
   }
 
   async function sessionDetail(id: string) {
@@ -486,6 +586,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     await col.groups.updateOne({ _id: group._id }, { $set: { status: "ready", warnings: [] } });
     await audit.append({ userId: p.sub, action: "capture.create", entity: "capture", entityId: doc._id.toHexString(), before: null, after: { file: doc.file, sha256: doc.sha256, columnsSha256: doc.columnsSha256, clock: doc.clock }, reason: null });
     bus.toSession(group.sessionId.toHexString(), "capture:ready", serializeCapture(doc));
+    changed(group.sessionId);
     return doc;
   }
 
@@ -528,7 +629,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     const session = await getOpenSession(sessionId);
     const { capture, frameAgentNs } = await frameAtColumn(body.captureId, body.column);
     const imp = await col.impulses.findOne({ _id: oid(body.impulseId, "impulseId") });
-    if (!imp) throw new HttpError(404, "Impuls tidak ditemukan");
+    if (!imp) throw new HttpError(404, "Sinyal tidak ditemukan");
     const group = await col.groups.findOne({ _id: capture.groupId });
     const offset = group && (await groupDeviceOffset(group));
     if (!offset) throw new HttpError(409, "Jam perangkat belum tersinkron (timing:clock belum diterima)");
@@ -564,7 +665,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   /**
    * Hapus satu tangkapan (kelompok finish) — mis. pemicu palsu dari orang
    * lewat, atau rekaman uji. Ditolak bila ada hasil yang sudah dikonfirmasi
-   * juri (barang bukti). Impuls RaceTime2 TIDAK hilang: dikembalikan ke
+   * juri (barang bukti). Sinyal RaceTime2 TIDAK hilang: dikembalikan ke
    * daftar "tanpa sesi" agar bisa dipulihkan; pemicu kamera ikut dihapus.
    */
   async function deleteGroup(p: Principal, id: string) {
@@ -616,6 +717,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       }
     }
     bus.toSession(group.sessionId.toHexString(), "group:deleted", { groupId: id });
+    changed(group.sessionId);
     return { deleted: true, racetimeImpulsesReturned: racetimeIds.length, cameraTriggersDeleted: cameraIds.length };
   }
 
@@ -628,7 +730,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     await repairGroup(c.groupId);
   }
 
-  /** Hitung ulang waktu kamera & pasangan urutan↔impuls untuk satu kelompok finish. */
+  /** Hitung ulang waktu kamera & pasangan urutan↔sinyal untuk satu kelompok finish. */
   async function repairGroup(groupId: ObjectId) {
     const group = await col.groups.findOne({ _id: groupId });
     if (!group) return;
@@ -670,9 +772,9 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       };
       if (c.status === "confirmed") {
         // Hasil terkonfirmasi tidak pernah diubah diam-diam; beri tanda saja.
-        const changed = c.timeSource !== "manual" && (c.timeNs !== computed.timeNs || String(c.impulseId) !== String(computed.impulseId));
-        const warnings = changed ? [...r.warnings, "Urutan/kalibrasi berubah setelah konfirmasi — periksa & konfirmasi ulang."] : r.warnings;
-        await col.crossings.updateOne({ _id: c._id }, { $set: { cameraTimeNs: computed.cameraTimeNs, warnings, status: changed ? "disputed" : "confirmed" } });
+        const moved = c.timeSource !== "manual" && (c.timeNs !== computed.timeNs || String(c.impulseId) !== String(computed.impulseId));
+        const warnings = moved ? [...r.warnings, "Urutan/kalibrasi berubah setelah konfirmasi — periksa & konfirmasi ulang."] : r.warnings;
+        await col.crossings.updateOne({ _id: c._id }, { $set: { cameraTimeNs: computed.cameraTimeNs, warnings, status: moved ? "disputed" : "confirmed" } });
         official.push({ crossingId: r.crossingId, officialTime: c.officialTime });
       } else {
         await col.crossings.updateOne({ _id: c._id }, { $set: { ...computed, warnings: r.warnings } });
@@ -690,6 +792,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
       groupId: groupId.toHexString(), status: group.status, warnings,
       crossings: await col.crossings.find({ groupId }).sort({ rank: 1 }).toArray(),
     });
+    changed(group.sessionId);
   }
 
   async function confirmCrossing(p: Principal, id: string, body: z.infer<typeof CrossingConfirm>) {
@@ -701,14 +804,14 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
 
     let { timeNs, timeSource, finishTime, officialTime } = c;
     if (body.manualTime) {
-      if (c.timeSource === "impulse") throw new HttpError(400, "Waktu impuls tersedia — waktu manual tidak diizinkan");
+      if (c.timeSource === "impulse") throw new HttpError(400, "Waktu sinyal tersedia — waktu manual tidak diizinkan");
       const ns = parseClock(body.manualTime);
       timeNs = ns.toString();
       timeSource = "manual";
       finishTime = formatClock(ns, 3);
       officialTime = officialClock(ns, cfg.PF_OFFICIAL_ROUNDING);
     }
-    if (timeNs === null) throw new HttpError(409, "Belum ada waktu: tunggu impuls, sinkronkan jam, atau isi waktu manual");
+    if (timeNs === null) throw new HttpError(409, "Belum ada waktu: tunggu sinyal, sinkronkan jam, atau isi waktu manual");
 
     const lane = session.lanes.find((l) => l.teamId === body.teamId);
     const update = {
@@ -724,6 +827,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     });
     const saved = (await col.crossings.findOne({ _id: c._id }))!;
     bus.toSession(c.sessionId.toHexString(), "crossing:updated", saved);
+    changed(c.sessionId);
     await deliver(saved, session);
     return saved;
   }
@@ -758,8 +862,9 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   }
 
   return {
-    updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger, assignImpulse, resumePending, requestExtraction,
-    createSession, sessionFromTiming, armSession, closeSession, sessionDetail,
+    updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger,
+    getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
+    createSession, sessionFromTiming, armSession, closeSession, sessionList, finishFeed, sessionDetail,
     addCapture, captureFrames, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,
     /** Hentikan timer kelompok finish saat API dimatikan. */

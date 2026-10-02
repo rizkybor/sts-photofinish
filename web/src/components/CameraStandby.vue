@@ -2,11 +2,15 @@
 // Standby kamera: gambar live + garis imajiner tegak lurus untuk memastikan
 // kamera lurus terhadap garis finish/tiang photocell sebelum lomba.
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { CATEGORY } from "../lib/labels";
+import { closeQueue, fmtGap, fmtTime } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
+import type { FinishEvent } from "../lib/types";
+import FinishFeed from "./FinishFeed.vue";
 import { midX, tiltFromVerticalDeg, tiltLevel, type Line } from "../lib/geometry";
 import AppIcon, { type IconName } from "./ui/AppIcon.vue";
 
-const emit = defineEmits<{ back: [] }>();
+const emit = defineEmits<{ back: []; review: [f: FinishEvent] }>();
 
 interface PreviewFrame {
   cameraId: string; width: number; height: number; fps: number; finishLine: Line; jpeg: ArrayBuffer; receivedAt: number;
@@ -99,12 +103,23 @@ onUnmounted(() => {
   <div class="page-head">
     <div class="grow">
       <h1 class="page-title">Standby Kamera</h1>
-      <p class="page-subtitle">Pastikan kamera lurus terhadap garis finish sebelum heat pertama dimulai.</p>
+      <p class="page-subtitle">Posisi operator selama lomba. Buka detail sesi hanya saat ada finish berdekatan.</p>
     </div>
     <label class="field" style="width: 160px">
       <span class="field-label">Kamera</span>
       <span class="input-group"><AppIcon name="camera" /><input v-model="cameraId" class="input mono" @change="subscribe" /></span>
     </label>
+  </div>
+
+  <div v-if="closeQueue.length" class="close-alert" role="alert">
+    <span class="close-icon"><AppIcon name="compare" /></span>
+    <div class="grow">
+      <strong>Finish berdekatan — {{ closeQueue[0]!.boats }} perahu<template v-if="closeQueue[0]!.gapMs !== null">, selisih {{ fmtGap(closeQueue[0]!.gapMs) }}</template></strong>
+      <span>{{ CATEGORY[closeQueue[0]!.raceCategory].short }} · {{ closeQueue[0]!.sessionLabel }} · {{ fmtTime(closeQueue[0]!.createdAt) }}<template v-if="closeQueue.length > 1"> · +{{ closeQueue.length - 1 }} antre</template></span>
+    </div>
+    <button class="btn btn-primary" @click="emit('review', closeQueue[0]!)">
+      <AppIcon name="search" /> Tinjau sekarang <kbd>T</kbd>
+    </button>
   </div>
 
   <div class="layout">
@@ -144,6 +159,8 @@ onUnmounted(() => {
     </section>
 
     <aside class="side">
+      <FinishFeed @review="emit('review', $event)" />
+
       <section class="card">
         <div class="section-label">Kelurusan garis finish</div>
         <div class="gauge">
@@ -171,8 +188,8 @@ onUnmounted(() => {
         </label>
       </section>
 
-      <section class="card">
-        <div class="section-label">Cara cek kelurusan</div>
+      <details class="card">
+        <summary class="section-label" style="cursor: pointer">Cara cek kelurusan</summary>
         <ol class="steps">
           <li>Arahkan kamera <strong>tegak lurus</strong> ke garis finish dari tepi sungai.</li>
           <li>Klik gambar tepat di <strong>tiang photocell</strong> — garis biru pindah ke sana.</li>
@@ -180,12 +197,18 @@ onUnmounted(() => {
           <li><strong>Garis datar</strong> kuning sejajar permukaan air / horizon.</li>
           <li>Indikator kelurusan garis finish <strong>hijau</strong>.</li>
         </ol>
-      </section>
+      </details>
     </aside>
   </div>
 </template>
 
 <style scoped>
+.close-alert { display: flex; align-items: center; gap: 14px; padding: 12px 16px; margin-bottom: 16px; border-radius: 14px; background: var(--warn-bg); border: 2px solid var(--warn); color: var(--warn-ink); animation: flash 1.4s ease-in-out 3; }
+.close-alert .grow { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.close-alert strong { font-size: 1.05rem; color: var(--ink); }
+.close-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--warn); color: #fff; font-size: 22px; flex: none; }
+.close-alert kbd { font: 700 0.7rem var(--mono); padding: 1px 5px; border-radius: 5px; border: 1px solid currentColor; opacity: 0.8; margin-left: 4px; }
+@keyframes flash { 50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.35); } }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
 .side .card { margin-bottom: 16px; }
 .stage { position: relative; width: 100%; cursor: crosshair; line-height: 0; border-radius: 12px; overflow: hidden; background: var(--race-2); }
@@ -216,4 +239,5 @@ onUnmounted(() => {
 .switch:checked::after { left: 19px; }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 0.88rem; color: var(--text-2); }
 @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .close-alert { flex-wrap: wrap; } .close-alert .btn { width: 100%; justify-content: center; } }
 </style>

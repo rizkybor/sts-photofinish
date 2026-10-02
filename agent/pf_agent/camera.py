@@ -28,6 +28,10 @@ log = logging.getLogger(__name__)
 FrameHandler = Callable[[int, np.ndarray], None]
 
 
+class CameraError(RuntimeError):
+    """Kamera tidak bisa dibuka/dibaca — bisa ditangkap (mis. untuk kembali ke pengaturan lama)."""
+
+
 class CameraSource:
     def __init__(self, source: str, fps: float, width: int | None, height: int | None) -> None:
         self.source = source
@@ -43,7 +47,7 @@ class CameraSource:
     def open(self) -> cv2.VideoCapture:
         cap = cv2.VideoCapture(int(self.source) if self.source.isdigit() else self.source)
         if not cap.isOpened():
-            raise SystemExit(f"Kamera tidak bisa dibuka: {self.source}")
+            raise CameraError(f"Kamera tidak bisa dibuka: {self.source}")
         if not self.replay:
             if self._width:
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
@@ -63,7 +67,7 @@ class CameraSource:
                 if ok and frame is not None:
                     return frame
                 if time.monotonic() > deadline:
-                    raise SystemExit(
+                    raise CameraError(
                         "Gagal membaca frame dari kamera. Periksa: (1) izin kamera untuk aplikasi terminal di "
                         "System Settings → Privacy & Security → Camera, lalu buka ulang terminal; "
                         "(2) kamera tidak sedang dipakai aplikasi lain (FaceTime/Zoom/Meet)."
@@ -86,15 +90,30 @@ class CameraSource:
         replay_period = 1.0 / (cap.get(cv2.CAP_PROP_FPS) or self._target_fps) if self.replay else 0.0
         next_due = time.perf_counter()
         frames, window_start = 0, time.perf_counter()
+        misses = 0
         try:
             while not self._stop.is_set():
                 if not cap.grab():
                     if self.replay:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # putar ulang
                         continue
-                    log.error("Kamera berhenti mengirim frame — mencoba lagi")
+                    misses += 1
+                    self.measured_fps = 0.0
+                    if misses % 4 == 0:
+                        # ±2 dtk tanpa gambar (mis. iPhone Continuity Camera terputus,
+                        # kabel USB longgar): tutup lalu buka ulang perangkat.
+                        log.error("Kamera %s tidak mengirim gambar — membuka ulang perangkat", self.source)
+                        cap.release()
+                        try:
+                            cap = self.open()
+                        except CameraError as err:
+                            log.error("%s — mencoba lagi", err)
+                            cap = cv2.VideoCapture()  # objek kosong; grab() gagal → dicoba lagi
                     time.sleep(0.5)
                     continue
+                if misses:
+                    log.info("Kamera %s kembali mengirim gambar", self.source)
+                    misses = 0
                 ts = now_ns()
                 ok, frame = cap.retrieve()
                 if not ok:

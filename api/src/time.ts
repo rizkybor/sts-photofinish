@@ -67,7 +67,7 @@ export interface ClockOffsets {
   agentOffsetNs: bigint;
   /** Jam host timing (epoch) − jam perangkat RaceTime2 (time of day). */
   deviceOffsetNs: bigint;
-  /** Koreksi kalibrasi lapangan (impuls photocell − frame haluan). */
+  /** Koreksi kalibrasi lapangan (sinyal photocell − frame haluan). */
   calibrationOffsetNs: bigint;
 }
 

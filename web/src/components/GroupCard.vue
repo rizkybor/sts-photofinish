@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Satu kelompok finish: impuls RaceTime2, gambar slit-scan, urutan perahu.
+// Satu kelompok finish: sinyal RaceTime2, gambar slit-scan, urutan perahu.
 import { computed, ref } from "vue";
 import { api, can } from "../lib/api";
 import { GROUP_STATUS, TIME_SOURCE } from "../lib/labels";
@@ -37,7 +37,7 @@ const st = computed(() => GROUP_STATUS[props.group.status]);
 async function onMark(column: number) {
   if (!props.capture) return;
   if (mode.value === "calibrate") {
-    // Kalibrasi butuh impuls photocell RaceTime2 sungguhan, bukan pemicu kamera.
+    // Kalibrasi butuh sinyal photocell RaceTime2 sungguhan, bukan pemicu kamera.
     const first = rtImpulses.value[0];
     if (!first) return;
     const res = await attempt(() => api<{ calibrationOffsetMs: number }>("POST", `/api/sessions/${props.session._id}/calibrate`, {
@@ -72,7 +72,7 @@ async function removeGroup() {
     okText: "Hapus tangkapan",
     text:
       "Gambar rekaman dan tanda urutan di kelompok ini dihapus permanen." +
-      (rt ? ` ${rt} impuls RaceTime2 tidak hilang — dikembalikan ke daftar "tanpa sesi".` : "") +
+      (rt ? ` ${rt} sinyal RaceTime2 tidak hilang — dikembalikan ke daftar "tanpa sesi".` : "") +
       " Tindakan ini tercatat di audit log.",
   });
   if (!ok) return;
@@ -123,7 +123,7 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
         <template v-if="editable">
           <div class="btn-group">
             <button class="btn btn-sm" :class="{ 'is-active': mode === 'mark' }" @click="mode = 'mark'"><AppIcon name="touch" /> Tandai urutan</button>
-            <button class="btn btn-sm" :class="{ 'is-active': mode === 'calibrate' }" :disabled="!rtImpulses.length" :title="rtImpulses.length ? '' : 'Butuh impuls RaceTime2'" @click="mode = 'calibrate'"><AppIcon name="target" /> Kalibrasi kamera</button>
+            <button class="btn btn-sm" :class="{ 'is-active': mode === 'calibrate' }" :disabled="!rtImpulses.length" :title="rtImpulses.length ? '' : 'Butuh sinyal RaceTime2'" @click="mode = 'calibrate'"><AppIcon name="target" /> Kalibrasi kamera</button>
           </div>
           <template v-if="mode === 'mark'">
             <span>Urutan <strong class="readout">{{ nextRank }}</strong></span>
@@ -143,7 +143,7 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
             </div>
             <input v-else v-model="teamId" class="input input-sm mono" placeholder="Team ID" style="width: 130px; background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2)" />
           </template>
-          <span v-else class="hint">Klik haluan perahu kalibrasi (impuls pertama).</span>
+          <span v-else class="hint">Klik haluan perahu kalibrasi (sinyal pertama).</span>
         </template>
         <span class="spacer" />
         <span class="readout">{{ hover ? `kolom ${hover.column} · ${hover.label}` : `${capture.fps} fps · ${(1000 / capture.fps).toFixed(1)} ms/kolom` }}</span>
