@@ -82,7 +82,9 @@ ditulis admin di **Keterangan** sesi.
 - Diterapkan bila **Event** sama dan tim ada di heat/babak yang sedang tampil.
   Format lomba, Division/Race/Initial tidak dicek (sesi lama yang masih
   membawa format tetap dicocokkan formatnya).
-- Baris pemicu kamera ("Photo Finish" di panel waktu) muncul di halaman race
+- Baris pemicu kamera di panel waktu: Registration Id unik berawalan `PF`
+  (19 karakter seperti frame RaceTime2, mis. `PF0000042101530123R`) dan
+  Racetime `PF` + `HHMMSSmmm` (mis. `PF101530123`). Muncul di halaman race
   mana pun dari Event yang sama.
 - Tim dicari berdasarkan `teamId`, lalu BIB, di list yang sedang tampil
   (heat/babak aktif).

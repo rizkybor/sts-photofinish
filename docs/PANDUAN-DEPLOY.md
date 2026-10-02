@@ -229,7 +229,8 @@ Bila ingin menjalankan per komponen secara manual: `npm run dev:api`,
 5. **Picu finish:** lewatkan benda (tangan, buku) melewati **garis tengah kamera**.
    - Photo Finish: **kelompok finish** baru muncul otomatis. Sekitar 3 detik
      kemudian, gambar **slit-scan** dan **foto frame** tampil.
-   - Timing: baris **`Photo Finish`** muncul di tabel waktu, **Buffer-Timer-Finish** terisi.
+   - Timing: baris dengan Registration Id berawalan **`PF`** (mis. `PF0000042101530123R`,
+     Racetime `PF101530123`) muncul di tabel waktu, **Buffer-Timer-Finish** terisi.
    - Dengan simulator: ketik `2` + Enter (dua perahu H2H).
 6. **Tandai urutan:** pilih lintasan **A** → klik ujung haluan di slit-scan.
    Pilih **B** → klik haluan berikutnya. Kiri = lebih dulu. Arahkan kursor ke
