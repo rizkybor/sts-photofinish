@@ -25,6 +25,7 @@ const skip = !existsSync(CORE) && "sts-timingsystem tidak ditemukan";
 
 const SECRET = "t".repeat(40);
 let mongo: MongoMemoryServer, database: Database, app: Awaited<ReturnType<typeof buildApp>>, base = "", capturesDir = "";
+let cfg: ReturnType<typeof loadConfig>;
 
 async function http(method: string, url: string, token?: string, body?: unknown) {
   const res = await fetch(base + url, { method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -39,7 +40,7 @@ before(async () => {
   if (skip) return;
   mongo = await MongoMemoryServer.create();
   capturesDir = await mkdtemp(path.join(tmpdir(), "pf-interop-"));
-  const cfg = loadConfig({ NODE_ENV: "test", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_interop", PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir, PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000" });
+  cfg = loadConfig({ NODE_ENV: "test", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_interop", PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir, PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000" });
   database = await connectDb(cfg);
   app = await buildApp(cfg, database);
   await app.listen({ host: "127.0.0.1", port: 0 });
@@ -79,10 +80,9 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   });
   await new Promise<void>((r) => agent.once("connect", () => r()));
 
-  // Admin set jam PF, operator buka sesi H2H dengan bucket
+  // Admin set jam PF, operator buka sesi H2H (cukup terhubung ke Event)
   await http("POST", "/api/clock/settings", adm, { action: "set-time", deviceTime: "10:00:00.000" });
-  const bucket = { divisionId: "d1", raceId: "r1", initialId: "i1" };
-  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "E1", bucket, raceCategory: "H2H", label: "H2H", lanes: [{ lane: "A", teamId: "T-A", bib: "7" }] });
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "E1", raceCategory: "H2H", label: "H2H", lanes: [{ lane: "A", teamId: "T-A", bib: "7" }] });
   await http("POST", `/api/sessions/${session._id}/arm`, op);
 
   // Klien timing — sinyal dikirim SEBELUM terhubung → harus antre di outbox
@@ -123,7 +123,7 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   await http("POST", `/api/crossings/${crossing._id}/confirm`, juri, { teamId: "T-A", crewInBoat: 6, crewExpected: 6, upright: true });
   await until(() => received.length === 1);
   assert.equal(received[0].finishTime, imp!.deviceTime);
-  assert.deepEqual(received[0].bucket, bucket);
+  assert.equal(received[0].eventId, "E1");
   assert.equal(received[0].bib, "7");
   assert.ok(core.verify(SECRET, received[0]));
   assert.equal(client.pending().length, 1);
@@ -134,31 +134,49 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   assert.equal(client.pending().length, 0);
   assert.deepEqual(saved.pending, {});
 
-  // Tombol "Kirim heat ke Photo Finish" (armHeat) — termasuk field null & angka
-  const armed = await client.armHeat({
-    eventId: "E1", bucket: { divisionId: "d1", raceId: "r1", initialId: "i1" }, raceCategory: "RX", heatId: "R1-H3",
-    label: "RX R4 Putra · Heat Round 1 · Heat 3",
-    lanes: [
-      { lane: "1", teamId: "T-1", bib: "31", teamName: "Satu", crewExpected: 4 },
-      { lane: "2", teamId: "T-2", bib: "", teamName: null, crewExpected: null },
-    ],
-  });
-  assert.equal(armed.ok, true, armed.error);
-  const rx = (await database.col.sessions.findOne({ _id: new ObjectId(armed.sessionId) }))!;
-  assert.equal(rx.armed, true);
-  assert.equal(rx.raceCategory, "RX");
-  assert.deepEqual(rx.lanes[1], { lane: "2", teamId: "T-2", bib: null, teamName: null, crewExpected: null });
+  // Sesi berikutnya dibuat admin di Photo Finish (cukup Event, tanpa format)
+  const { data: next } = await http("POST", "/api/sessions", op, { eventId: "E1", note: "R4 Putra" });
+  await http("POST", `/api/sessions/${next._id}/arm`, op);
   assert.equal((await database.col.sessions.findOne({ _id: new ObjectId(session._id) }))!.armed, false, "hanya satu sesi aktif");
+  assert.equal(typeof client.armHeat, "undefined", "fitur Kirim heat sudah dihapus dari klien timing");
 
   // Perahu lewat garis di kamera → timing menerima baris "Photo Finish" + waktu
   const res = await agent.emitWithAck("agent:trigger", { cameraId: "cam-1", bootId: crypto.randomUUID(), seq: 1, agentNs: nowEpochNs().toString(), agentOffsetNs: "0" });
   assert.equal(res.accepted, true);
   await until(() => triggers.length === 1);
-  assert.equal(triggers[0].raceCategory, "RX");
+  assert.equal(triggers[0].raceCategory, null);
   assert.match(triggers[0].time, /^\d{2}:\d{2}:\d{2}\.\d{3}$/);
-  assert.deepEqual(triggers[0].bucket, { divisionId: "d1", raceId: "r1", initialId: "i1" });
+  assert.equal(triggers[0].eventId, "E1");
 
   client.stop();
-  assert.equal((await client.armHeat({ eventId: "E1", bucket: { divisionId: "d", raceId: "r", initialId: "i" }, raceCategory: "H2H", heatId: null, label: "x", lanes: [] })).ok, false);
   agent.close();
+});
+
+test("klien timing tersambung ulang sendiri setelah API ditutup lalu hidup lagi (Ctrl+C dev:local)", { skip }, async () => {
+  const core = createRequire(CORE)(CORE);
+  const timingIo = createRequire(path.join(TIMING_APP, "package.json"))("socket.io-client").io;
+  const start = async (port = 0) => {
+    const a = await buildApp(cfg, database);
+    await a.listen({ host: "127.0.0.1", port });
+    const addr = a.server.address();
+    return { a, port: typeof addr === "object" && addr ? addr.port : 0 };
+  };
+  let { a: api1, port } = await start();
+  const token = issueToken({ sub: "device:timing:r", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h");
+  const client = core.createPhotofinishClient({
+    apiUrl: `http://127.0.0.1:${port}`, deviceToken: token, hmacSecret: SECRET, io: timingIo,
+    storage: { load: () => null, save: () => {} }, now: () => nowEpochNs().toString(),
+  });
+  client.start();
+  await until(() => client.status().connected);
+
+  await api1.close(); // shutdown rapi → io.close() → "io server disconnect"
+  await until(() => !client.status().connected);
+  const { a: api2 } = await start(port);
+  try {
+    await until(() => client.status().connected, 15000);
+  } finally {
+    client.stop();
+    await api2.close();
+  }
 });

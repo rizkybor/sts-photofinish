@@ -21,7 +21,7 @@ interface Config {
 }
 interface Status {
   cameraId: string; connected?: boolean; running?: boolean; width?: number; height?: number; measuredFps?: number;
-  finishLine?: Line | null; lastError?: string | null; settings?: Config; lastFrameAgeMs?: number | null; notice?: string | null;
+  finishLine?: Line | null; lastError?: string | null; settings?: Config; lastFrameAgeMs?: number | null; notice?: string | null; retrying?: boolean;
 }
 interface CameraRow { cameraId: string; connected: boolean; status: Status | null; saved: { config: Config; revision: number; updatedAt: string } | null }
 interface ScanResult { cameras: Array<{ index: number; width: number; height: number; inUse: boolean }>; deviceNames: string[]; videos: string[] }
@@ -154,8 +154,10 @@ async function apply() {
     toast("success", res.pending ? "Pengaturan disimpan" : "Pengaturan kamera diterapkan");
     await load(true);
   } catch (e) {
-    result.value = { kind: "error", text: `${(e as Error).message} — agent kembali ke pengaturan sebelumnya, perubahan tidak disimpan.` };
-    toast("error", "Pengaturan gagal diterapkan", (e as Error).message);
+    // Pesan dari agent sudah menyebut apakah kamera lama berhasil dibuka lagi.
+    result.value = { kind: "error", text: (e as Error).message };
+    toast("error", "Pengaturan gagal diterapkan", "Perubahan tidak disimpan");
+    await load(true);
   } finally {
     busy.value = null;
   }
@@ -305,13 +307,19 @@ const shortPath = (p: string) => p.split("/").slice(-2).join("/");
           <span class="chip mono">{{ cameraId }}</span>
           <span v-if="status?.width" class="chip">{{ status.width }}×{{ status.height }}</span>
           <span v-if="status?.measuredFps" class="chip">{{ status.measuredFps }} fps terukur</span>
-          <span v-if="current?.connected && (status?.lastFrameAgeMs ?? 0) > 3000" class="status-pill status-danger"><span class="dot" />Kamera tidak mengirim gambar</span>
+          <span v-if="current?.connected && status?.running === false" class="status-pill status-danger"><span class="dot" />Kamera tidak berjalan</span>
+          <span v-else-if="current?.connected && (status?.lastFrameAgeMs ?? 0) > 3000" class="status-pill status-danger"><span class="dot" />Kamera tidak mengirim gambar</span>
           <span v-if="current?.saved" class="chip chip-brand">Pengaturan web · rev {{ current.saved.revision }}</span>
           <span v-else class="chip">Pengaturan .env</span>
         </div>
         <div v-if="status?.notice" class="alert alert-warn"><AppIcon name="warning" /><span>{{ status.notice }}</span></div>
-        <div v-if="status?.lastError" class="alert alert-danger"><AppIcon name="error" /><span>Percobaan terakhir gagal: {{ status.lastError }}</span></div>
-        <div v-if="current?.connected && (status?.lastFrameAgeMs ?? 0) > 3000" class="alert alert-warn">
+        <div v-if="current?.connected && status?.running === false" class="alert alert-danger">
+          <AppIcon name="error" />
+          <span><strong>Kamera {{ status.settings?.source }} tidak bisa dibuka — agent terus mencoba setiap 3 detik.</strong> {{ status.lastError }}
+            Bila kamera itu memang tidak tersedia (mis. iPhone tidak tersambung), <strong>Pindai kamera</strong> lalu pilih kamera lain dan Terapkan.</span>
+        </div>
+        <div v-else-if="status?.lastError" class="alert alert-danger"><AppIcon name="error" /><span>Percobaan terakhir gagal: {{ status.lastError }}</span></div>
+        <div v-if="current?.connected && status?.running !== false && (status?.lastFrameAgeMs ?? 0) > 3000" class="alert alert-warn">
           <AppIcon name="warning" /><span>Kamera berhenti mengirim gambar — agent mencoba membuka ulang. iPhone: pastikan terkunci, diam, dan dekat Mac. USB: cek kabel. Atau pilih kamera lain lalu Terapkan.</span>
         </div>
       </section>
@@ -459,7 +467,7 @@ const shortPath = (p: string) => p.split("/").slice(-2).join("/");
           <span class="spacer" />
           <button v-if="current?.saved" class="btn btn-ghost" :disabled="busy !== null" @click="resetToEnv">Kembalikan ke .env</button>
         </div>
-        <p class="hint" style="margin: 8px 0 0">Bila kamera baru gagal dibuka, agent otomatis kembali ke pengaturan sebelumnya. Setiap perubahan tercatat di audit log.</p>
+        <p class="hint" style="margin: 8px 0 0">Bila kamera baru gagal dibuka, agent otomatis kembali ke pengaturan sebelumnya (bila kamera lama masih tersedia). Setiap perubahan tercatat di audit log.</p>
       </section>
     </div>
 

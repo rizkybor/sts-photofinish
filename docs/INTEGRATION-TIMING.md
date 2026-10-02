@@ -44,11 +44,11 @@ payload waktu; lihat `microGateReader.js`). Akibatnya:
 | `src/services/photofinish.js` | Renderer: `reportFrame()`, `onVerified()`, `markApplied()`, status |
 | `src/utils/microGateReader.js` | + argumen ke-4 `meta = { recvUs, frameBytes }` untuk callback |
 | `src/mixins/serialPortMixin.js` | `onFinish`/`onLap` → sinyal; `onStart` berwaktu → heartbeat |
-| `src/mixins/photofinishMixin.js` | Menerapkan hasil ke view (cek kategori + bucket, konfirmasi bila menimpa) |
+| `src/mixins/photofinishMixin.js` | Menerapkan hasil ke view (cek Event + format lomba, konfirmasi bila menimpa) |
 | `src/components/photofinish/PhotofinishBadge.vue` | Status koneksi / antrean / hasil menunggu |
-| `src/components/photofinish/PhotofinishBar.vue` | Badge + tombol & modal **Kirim heat ke Photo Finish** |
+| `src/components/photofinish/PhotofinishBadge.vue` | Badge **Photo Finish terhubung / terputus** di halaman race |
 | `src/background.js` | Memanggil `setupPhotofinish()` |
-| `HeadToHead.vue`, `RaftingCross.vue`, `DownRiverRace.vue` | `pfCategory`, `pfBucket()`, `pfLocateTeam()`, `pfHeats()` + PhotofinishBar |
+| `HeadToHead.vue`, `RaftingCross.vue`, `DownRiverRace.vue` | `pfCategory`, `pfBucket()` (hanya eventId), `pfLocateTeam()` + PhotofinishBadge |
 
 ## Mengaktifkan
 
@@ -68,29 +68,22 @@ payload waktu; lihat `microGateReader.js`). Akibatnya:
    Secret **tidak pernah** masuk bundle renderer (tidak memakai `VUE_APP_`).
 3. Tanpa konfigurasi, integrasi nonaktif dan aplikasi berjalan seperti sebelumnya.
 
-## Tombol "Kirim heat ke Photo Finish"
+## Sesi Photo Finish
 
-Di halaman H2H / Rafting Cross / DRR (di samping badge status) ada tombol
-**Kirim heat ke Photo Finish**. Operator memilih heat dari daftar, lalu
-API membuat sesi (atau memakai ulang sesi terbuka untuk heat yang sama) dan
-**langsung mengaktifkannya**. Event/Division/Race/Initial, heat, dan tim
-terisi otomatis, jadi operator tidak perlu menyalin ID dari DevTools.
-
-| Format | Isi satu "heat" | Lintasan |
-|---|---|---|
-| H2H | Tim babak aktif dengan nomor `result.heat` sama | A/B mengikuti team1/team2 di bagan |
-| Rafting Cross | `currentRound.heats[n].teams` | 1–4 sesuai slot |
-| DRR | Semua tim kategori yang sedang dibuka (tanpa heat) | BIB |
-
-Jumlah awak dibaca dari nama Division (R4 → 4, R6 → 6). Pesan
-`timing:session` ditandatangani HMAC, dan API memverifikasinya pada payload
-mentah sebelum validasi.
+Halaman race di sts-timingsystem hanya menampilkan badge **Photo Finish
+terhubung / terputus** (tidak ada tombol kirim heat). Sesi dibuat admin di
+aplikasi Photo Finish dan cukup terhubung ke **Event (Id Event)** — format
+lomba, Division/Race/Initial tidak dipilih. Nama Event dibaca dari
+`eventsCollection` (database `PF_TIMING_DB`, hanya baca). Pembeda antar sesi
+ditulis admin di **Keterangan** sesi.
 
 ## Aturan penerapan hasil di view
 
-- Diterapkan hanya bila `raceCategory` sesuai halaman **dan** Event +
-  Division + Race + Initial sama persis (aturan "Scope by 4 Categories").
-  Karena itu sesi Photo Finish **wajib** diisi Division/Race/Initial ID.
+- Diterapkan bila **Event** sama dan tim ada di heat/babak yang sedang tampil.
+  Format lomba, Division/Race/Initial tidak dicek (sesi lama yang masih
+  membawa format tetap dicocokkan formatnya).
+- Baris pemicu kamera ("Photo Finish" di panel waktu) muncul di halaman race
+  mana pun dari Event yang sama.
 - Tim dicari berdasarkan `teamId`, lalu BIB, di list yang sedang tampil
   (heat/babak aktif).
 - Kalau tim sudah punya Finish Time berbeda, operator ditanya dulu ("Ganti" /

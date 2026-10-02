@@ -47,33 +47,6 @@ export const TimingClock = z.object({
 });
 export type TimingClock = z.infer<typeof TimingClock>;
 
-/**
- * Tombol "Kirim heat ke Photo Finish" di sts-timingsystem: buat (atau pakai
- * ulang) sesi untuk heat tersebut lalu langsung aktifkan. HMAC diverifikasi
- * pada objek MENTAH sebelum parse (default Zod tidak boleh mengubah payload).
- */
-export const TimingSessionRequest = z.object({
-  type: z.literal("timing:session"),
-  eventId: z.string().min(1).max(64),
-  bucket: z.object({
-    divisionId: z.string().min(1).max(64),
-    raceId: z.string().min(1).max(64),
-    initialId: z.string().min(1).max(64),
-  }),
-  raceCategory: RaceCategory,
-  heatId: z.string().max(64).nullable(),
-  label: z.string().min(1).max(128),
-  lanes: z.array(z.object({
-    lane: z.string().min(1).max(16),
-    teamId: z.string().min(1).max(64),
-    bib: z.string().max(16).nullable(),
-    teamName: z.string().max(128).nullable(),
-    crewExpected: z.number().int().min(1).max(12).nullable(),
-  })).max(64),
-  cameraId: z.string().min(1).max(64).optional(),
-  sig: Sig,
-});
-
 // ---------- API → sts-timingsystem (ditandatangani HMAC) ----------
 
 /** Diterima timing system → panggil updateTime(finishTime, index, 'finish'). */
@@ -82,8 +55,9 @@ export interface PhotofinishVerified {
   crossingId: string;
   sessionId: string;
   eventId: string;
-  bucket: z.infer<typeof Bucket> | null;
-  raceCategory: z.infer<typeof RaceCategory>;
+  eventName: string | null;
+  /** null = sesi manual tanpa format — diterapkan di halaman race mana pun di Event itu. */
+  raceCategory: z.infer<typeof RaceCategory> | null;
   heatId: string | null;
   teamId: string;
   bib: string | null;
@@ -110,8 +84,8 @@ export interface PhotofinishTrigger {
   impulseId: string;
   sessionId: string;
   eventId: string;
-  bucket: { divisionId: string; raceId: string; initialId: string } | null;
-  raceCategory: z.infer<typeof RaceCategory>;
+  eventName: string | null;
+  raceCategory: z.infer<typeof RaceCategory> | null;
   heatId: string | null;
   cameraId: string;
   /** Waktu terekam, format sama dengan digitTimeFinish (HH:MM:SS.mmm). */
@@ -164,19 +138,18 @@ export const Lane = z.object({
   crewExpected: z.number().int().min(1).max(12).nullable().default(null),
 });
 
-/** Kategori di sts-timingsystem — hasil hanya diterapkan ke bucket yang sama persis. */
-export const Bucket = z.object({
-  divisionId: z.string().min(1).max(64),
-  raceId: z.string().min(1).max(64),
-  initialId: z.string().min(1).max(64),
-});
+export const SessionNote = z.object({ note: z.string().max(300).nullable() });
 
+/** Sesi cukup terhubung ke Event (Id Event); kategori Division/Race/Initial tidak dipakai. */
 export const SessionCreate = z.object({
   eventId: z.string().min(1).max(64),
-  bucket: Bucket.nullable().default(null),
-  raceCategory: RaceCategory,
+  eventName: z.string().max(200).nullable().default(null),
+  note: z.string().max(300).nullable().default(null),
+  /** Sesi manual tidak perlu format/heat/label: penerapannya sama untuk semua kategori. */
+  raceCategory: RaceCategory.nullable().default(null),
   heatId: z.string().max(64).nullable().default(null),
-  label: z.string().min(1).max(128),
+  /** Kosong = dibuat otomatis "<Nama Event> · Sesi N". */
+  label: z.string().max(128).nullable().default(null),
   lanes: z.array(Lane).max(64).default([]),
   cameraId: z.string().min(1).max(64).default("cam-1"),
 });

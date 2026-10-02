@@ -26,9 +26,14 @@ export interface LaneDoc {
 export interface SessionDoc {
   _id: ObjectId;
   eventId: string;
-  /** Division/Race/Initial di sts-timingsystem; null = belum ditautkan. */
-  bucket: { divisionId: string; raceId: string; initialId: string } | null;
-  raceCategory: "H2H" | "RX" | "DRR" | "SPRINT" | "SLALOM";
+  /** Nama Event dari eventsCollection sts-timingsystem (dicari dari Id Event). */
+  eventName: string | null;
+  /** Keterangan dari admin/operator Photo Finish (pembeda sesi, catatan heat). */
+  note?: string | null;
+  /** Data lama (sebelum sesi cukup terhubung ke Event) — tidak dipakai lagi. */
+  bucket?: unknown;
+  /** null = sesi manual tanpa format (penerapan sama untuk semua kategori). */
+  raceCategory: "H2H" | "RX" | "DRR" | "SPRINT" | "SLALOM" | null;
   heatId: string | null;
   label: string;
   lanes: LaneDoc[];

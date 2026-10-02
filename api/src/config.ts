@@ -12,6 +12,8 @@ const Env = z.object({
   PF_TRUST_PROXY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   PF_MONGO_URL: z.string().default("mongodb://127.0.0.1:27017"),
   PF_MONGO_DB: z.string().default("sts_photofinish"),
+  /** Database sts-timingsystem (cluster sama) — HANYA dibaca untuk nama Event. Kosong = tidak dipakai. */
+  PF_TIMING_DB: z.string().default(""),
   // Secret wajib panjang — tidak ada nilai default agar tidak pernah jalan
   // dengan secret contoh (pelajaran dari default "dev-secret" di racehub).
   PF_JWT_SECRET: z.string().min(32, "PF_JWT_SECRET minimal 32 karakter"),

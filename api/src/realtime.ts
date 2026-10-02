@@ -105,7 +105,6 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
           return { impulseId: imp._id.toHexString() };
         }));
         socket.on("timing:clock", (raw: unknown, ack?: Ack) => handle(ack, () => service.updateClock(TimingClock.parse(raw))));
-        socket.on("timing:session", (raw: unknown, ack?: Ack) => handle(ack, () => service.sessionFromTiming(p, raw)));
         service.redeliverPending().catch((err) => console.error("[redeliver]", err));
         return;
       }

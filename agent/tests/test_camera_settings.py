@@ -58,11 +58,44 @@ def test_ganti_pengaturan_saat_berjalan_dan_kembali_otomatis_bila_gagal():
         broken = base.merged({"sourceType": "video", "source": str(VIDEO)}, 2)
         object.__setattr__(broken, "source", str(Path(VIDEO).with_name("tidak-ada.mp4")))
         ok, err = pipe.reconfigure(broken)
-        assert not ok and "tidak bisa dibuka" in err
+        assert not ok and "tidak bisa dibuka" in err and "kembali ke pengaturan sebelumnya" in err
         assert pipe.settings.source == str(VIDEO) and pipe.status()["running"]
-        assert pipe.status()["lastError"] == err
+        assert err.startswith(pipe.status()["lastError"])
     finally:
         pipe.stop()
+
+
+@pytest.mark.skipif(not VIDEO.exists(), reason="video uji belum dibuat")
+def test_kamera_baru_dan_lama_gagal_agent_terus_mencoba_lalu_pulih(tmp_path, monkeypatch):
+    # Kasus lapangan: kamera lama terputus (iPhone menjauh / direbut proses lain)
+    # saat operator mencoba kamera baru yang juga gagal.
+    import shutil
+    from pf_agent import pipeline as pl
+    monkeypatch.setattr(pl, "RETRY_S", 0.2)
+    old_src = tmp_path / "kamera-lama.mp4"
+    shutil.copy(VIDEO, old_src)
+    base = base_settings(PF_CAMERA_SOURCE=str(old_src))
+    pipe = Pipeline(base, buffer_seconds=1)
+    pipe.run_forever()
+    try:
+        assert pipe.status()["running"]
+        old_src.rename(tmp_path / "dicabut.mp4")  # kamera lama "dicabut"
+        broken = base.merged({"sourceType": "video", "source": str(VIDEO)}, 1)
+        object.__setattr__(broken, "source", str(tmp_path / "tidak-ada.mp4"))
+        ok, err = pipe.reconfigure(broken)
+        assert not ok and "juga tidak bisa dibuka" in err and "terus mencoba" in err
+        st = pipe.status()
+        assert not st["running"] and st["retrying"] and st["lastError"]
+
+        (tmp_path / "dicabut.mp4").rename(old_src)  # kamera lama tersambung lagi
+        for _ in range(50):
+            if pipe.status()["running"]:
+                break
+            time.sleep(0.1)
+        st = pipe.status()
+        assert st["running"] and not st["retrying"] and st["lastError"] is None
+    finally:
+        pipe.close()
 
 
 def test_kamera_error_bisa_ditangkap():

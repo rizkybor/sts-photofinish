@@ -6,10 +6,10 @@ export interface User { sub: string; name: string; role: Role }
 
 export interface Lane { lane: string; teamId: string; bib: string | null; teamName: string | null; crewExpected: number | null }
 
-export interface Bucket { divisionId: string; raceId: string; initialId: string }
+export interface EventInfo { eventId: string; eventName: string; startDate: string | null; endDate: string | null; status: unknown }
 
 export interface Session {
-  _id: string; eventId: string; bucket: Bucket | null; raceCategory: RaceCategory; heatId: string | null; label: string;
+  _id: string; eventId: string; eventName: string | null; note?: string | null; raceCategory: RaceCategory | null; heatId: string | null; label: string;
   lanes: Lane[]; cameraId: string; armed: boolean; status: "open" | "closed";
   calibrationOffsetNs: string; calibratedAt: string | null; createdAt: string;
 }
@@ -18,7 +18,7 @@ export interface Session {
 export interface SessionProgress { finishes: number; recording: number; close: number; pending: number; confirmed: number }
 
 export interface FinishEvent {
-  groupId: string; sessionId: string; sessionLabel: string; raceCategory: RaceCategory; armed: boolean; status: "collecting" | "extracting" | "ready"; createdAt: string;
+  groupId: string; sessionId: string; sessionLabel: string; raceCategory: RaceCategory | null; armed: boolean; status: "collecting" | "extracting" | "ready"; createdAt: string;
   boats: number; gapMs: number | null; close: boolean; marked: number; confirmed: number; needsReview: boolean; resolved: boolean;
 }
 export type SessionSummary = Session & { progress: SessionProgress };

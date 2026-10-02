@@ -13,7 +13,7 @@ import type { Database } from "./db.js";
 import { openFile, resolveCapturePath, saveUploadedCapture, verifyFileUrl } from "./files.js";
 import { createRealtime } from "./realtime.js";
 import {
-  CalibrateBody, CameraConfig, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, LoginBody, SessionCreate, TimingClock, TimingImpulse,
+  CalibrateBody, CameraConfig, SessionNote, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, LoginBody, SessionCreate, TimingClock, TimingImpulse,
 } from "./schemas.js";
 import { createService, HttpError } from "./service.js";
 
@@ -74,6 +74,8 @@ export async function buildApp(cfg: Config, database: Database) {
 
   app.get("/api/finishes", { preHandler: guard.require("viewer") }, async () => service.finishFeed());
 
+  app.get("/api/events", { preHandler: guard.require("viewer") }, async () => service.listEvents());
+
   app.post("/api/sessions", { preHandler: guard.require("operator") }, async (req, reply) =>
     reply.code(201).send(await service.createSession(req.principal!, SessionCreate.parse(req.body))));
 
@@ -89,6 +91,9 @@ export async function buildApp(cfg: Config, database: Database) {
     await service.armSession(req.principal!, IdParam.parse(req.params).id, false);
     return { ok: true };
   });
+
+  app.put("/api/sessions/:id/note", { preHandler: guard.require("operator") }, async (req) =>
+    service.setSessionNote(req.principal!, IdParam.parse(req.params).id, SessionNote.parse(req.body).note));
 
   app.post("/api/sessions/:id/close", { preHandler: guard.require("operator") }, async (req) => {
     await service.closeSession(req.principal!, IdParam.parse(req.params).id);
@@ -245,9 +250,14 @@ export async function buildApp(cfg: Config, database: Database) {
   app.addHook("onReady", async () => {
     await service.resumePending();
   });
+  // preClose (bukan onClose): koneksi websocket harus ditutup SEBELUM server
+  // HTTP berhenti — server.close() menunggu semua koneksi selesai, jadi bila
+  // socket.io baru ditutup di onClose, shutdown menggantung (Ctrl+C / PM2).
+  app.addHook("preClose", async () => {
+    realtime.io.close();
+  });
   app.addHook("onClose", async () => {
     service.shutdown();
-    realtime.io.close();
   });
 
   return app;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { can } from "../lib/api";
-import { CATEGORY } from "../lib/labels";
+import { category } from "../lib/labels";
 import { armedSession, loadSessions, sessions } from "../lib/sessions";
 import type { SessionSummary } from "../lib/types";
 import AppIcon from "./ui/AppIcon.vue";
@@ -25,7 +25,7 @@ const shown = computed(() => {
   return sessions.list
     .filter((s) =>
       (filter.value === "all" || s.status === filter.value) &&
-      (!q || [s.label, s.eventId, s.heatId ?? "", CATEGORY[s.raceCategory].label].some((v) => v.toLowerCase().includes(q))))
+      (!q || [s.label, s.eventId, s.eventName ?? "", s.note ?? "", s.heatId ?? "", category(s.raceCategory).label].some((v) => v.toLowerCase().includes(q))))
     .sort((a, b) => rank(a) - rank(b) || b.createdAt.localeCompare(a.createdAt));
 });
 
@@ -36,7 +36,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
   <div class="page-head">
     <div class="grow">
       <h1 class="page-title">Sesi Photo Finish</h1>
-      <p class="page-subtitle">Satu sesi = satu heat / run di garis finish. Aktifkan sesi agar sinyal RaceTime2 masuk.</p>
+      <p class="page-subtitle">Satu sesi terhubung ke satu Event — berlaku untuk kategori apa pun. Aktifkan sesi agar sinyal RaceTime2 masuk.</p>
     </div>
     <button v-if="can('operator')" class="btn btn-primary" @click="emit('create')"><AppIcon name="add" /> Sesi baru</button>
   </div>
@@ -57,7 +57,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
   <section class="card" style="padding: 0; overflow: hidden">
     <div class="row" style="padding: 16px 16px 14px">
       <div class="input-group" style="flex: 1; min-width: 220px; max-width: 420px">
-        <AppIcon name="search" /><input v-model="query" class="input" placeholder="Cari label, event, heat, format…" />
+        <AppIcon name="search" /><input v-model="query" class="input" placeholder="Cari label, event, keterangan…" />
       </div>
       <div class="spacer" />
       <div class="btn-group" role="tablist">
@@ -70,16 +70,14 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
 
     <div class="table-wrap" style="border: 0; border-top: 1px solid var(--border); border-radius: 0">
       <table class="table">
-        <thead><tr><th class="num">#</th><th>Sesi</th><th>Format</th><th>Event / Kategori</th><th>Status</th><th>Tinjauan</th><th>Dibuat</th><th></th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Sesi</th><th>Event</th><th>Status</th><th>Tinjauan</th><th>Dibuat</th><th></th></tr></thead>
         <tbody>
           <tr v-for="(s, i) in shown" :key="s._id" class="clickable" :class="{ 'row-live': s.armed }" @click="emit('open', s._id)">
             <td class="num">{{ i + 1 }}</td>
-            <td><strong style="color: var(--ink)">{{ s.label }}</strong><div class="hint">{{ s.heatId ? `${CATEGORY[s.raceCategory].unit} ${s.heatId}` : "—" }} · {{ s.cameraId }}</div></td>
-            <td><span class="chip chip-brand">{{ CATEGORY[s.raceCategory].label }}</span></td>
+            <td><strong style="color: var(--ink)">{{ s.label }}</strong><div v-if="s.note" class="note">{{ s.note }}</div><div class="hint">{{ s.heatId ? `${category(s.raceCategory).unit} ${s.heatId}` : "—" }} · {{ s.cameraId }}</div></td>
             <td>
-              <span class="mono">{{ s.eventId }}</span>
-              <div v-if="s.bucket" class="hint mono">{{ s.bucket.divisionId }} · {{ s.bucket.raceId }} · {{ s.bucket.initialId }}</div>
-              <div v-else class="hint" style="color: var(--warn-ink)">Kategori belum ditautkan</div>
+              <span>{{ s.eventName ?? "—" }}</span>
+              <div class="hint mono">{{ s.eventId }}</div>
             </td>
             <td>
               <span v-if="s.armed" class="status-pill status-live"><span class="dot" />AKTIF</span>
@@ -112,4 +110,5 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
 .chip-warn { background: var(--warn-bg); color: var(--warn-ink); }
 .chip-ok { background: var(--ok-bg); color: var(--ok-ink); }
 .row-live td { background: var(--bad-bg); }
+.note { font-size: 0.8rem; color: var(--brand-ink); font-weight: 600; }
 </style>

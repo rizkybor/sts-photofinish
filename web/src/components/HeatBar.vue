@@ -4,7 +4,6 @@
 // berdekatan belum ditinjau — tanpa kembali ke daftar sesi.
 import { computed } from "vue";
 import { can } from "../lib/api";
-import { CATEGORY } from "../lib/labels";
 import { armedSession, pendingSessions, sessions } from "../lib/sessions";
 import type { SessionSummary } from "../lib/types";
 import AppIcon from "./ui/AppIcon.vue";
@@ -36,15 +35,15 @@ function workText(s: SessionSummary) {
     <div class="heatbar-inner">
       <button
         v-if="armedSession" class="live" :class="{ current: armedSession._id === currentId }"
-        :title="`Buka detail heat aktif (A) — ${workText(armedSession)}`" @click="emit('open', armedSession._id)"
+        :title="`Buka detail sesi aktif (A) — ${workText(armedSession)}`" @click="emit('open', armedSession._id)"
       >
         <span class="live-dot" />
-        <span class="live-tag">AKTIF · {{ CATEGORY[armedSession.raceCategory].short }}</span>
+        <span class="live-tag">AKTIF</span>
         <span class="live-label">{{ armedSession.label }}</span>
         <span class="live-meta">{{ armedSession.progress.finishes }} finish<template v-if="armedSession.progress.pending"> · {{ armedSession.progress.pending }} perlu ditinjau</template></span>
         <kbd v-if="armedSession._id !== currentId">A</kbd>
       </button>
-      <span v-else class="idle"><AppIcon name="sensors" /> Tidak ada heat aktif — sinyal RaceTime2 masuk ke daftar "tanpa sesi"</span>
+      <span v-else class="idle"><AppIcon name="sensors" /> Tidak ada sesi aktif — sinyal RaceTime2 masuk ke daftar "tanpa sesi"</span>
 
       <div v-if="backlog.length" class="backlog">
         <span class="backlog-title">Berdekatan belum ditinjau</span>
@@ -59,8 +58,8 @@ function workText(s: SessionSummary) {
       </div>
 
       <span class="spacer" />
-      <button v-if="can('operator')" class="btn btn-sm btn-primary" title="Salin sesi aktif untuk heat/run berikutnya & langsung aktifkan (N)" @click="emit('next')">
-        <AppIcon name="skipNext" /> {{ armedSession ? `${CATEGORY[armedSession.raceCategory].unit} berikutnya` : "Sesi baru" }} <kbd>N</kbd>
+      <button v-if="can('operator')" class="btn btn-sm btn-primary" title="Sesi baru untuk Event yang sama & langsung aktifkan (N)" @click="emit('next')">
+        <AppIcon name="skipNext" /> {{ sessions.list.some((s) => s.status === "open") ? "Sesi berikutnya" : "Sesi baru" }} <kbd>N</kbd>
       </button>
     </div>
   </div>

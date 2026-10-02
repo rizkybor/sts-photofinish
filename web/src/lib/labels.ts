@@ -13,6 +13,11 @@ export const CATEGORY: Record<RaceCategory, { label: string; short: string; lane
   SLALOM: { label: "Slalom", short: "Slalom", lanes: 0, unit: "Run", hint: "Satu sesi per run (Run 1 / Run 2) — perahu finish satu per satu." },
 };
 
+type CategoryInfo = (typeof CATEGORY)[RaceCategory];
+/** Sesi manual tanpa format: penerapan sama untuk semua kategori. */
+const GENERAL: CategoryInfo = { label: "Semua format", short: "Umum", lanes: 0, unit: "Sesi", hint: "Satu sesi untuk Event ini — berlaku untuk kategori apa pun." };
+export const category = (rc: RaceCategory | null | undefined): CategoryInfo => (rc ? CATEGORY[rc] : GENERAL);
+
 export const TIME_SOURCE = {
   impulse: { label: "Sinyal RaceTime2", cls: "status-success" },
   camera: { label: "Waktu kamera", cls: "status-upcoming" },

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { api, can } from "../lib/api";
-import { CATEGORY } from "../lib/labels";
+import { category } from "../lib/labels";
 import { armedSession, sessions } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
 import type { Crossing, Group, SessionDetail } from "../lib/types";
@@ -44,7 +44,7 @@ const todoGroups = computed(() => allGroups.value.filter(needsReview));
 // DRR/Sprint/Slalom: satu sesi berisi banyak finish satu perahu — tampilkan
 // yang berdekatan saja secara bawaan agar tinjauan cepat.
 const onlyClose = ref<boolean | null>(null);
-const showOnlyClose = computed(() => onlyClose.value ?? (!!session.value && CATEGORY[session.value.raceCategory].lanes === 0 && allGroups.value.length > 3));
+const showOnlyClose = computed(() => onlyClose.value ?? (!!session.value && category(session.value.raceCategory).lanes === 0 && allGroups.value.length > 3));
 const groups = computed(() => (showOnlyClose.value ? allGroups.value.filter((g) => isClose(g) || needsReview(g) || g._id === props.focusGroup) : allGroups.value));
 const hiddenCount = computed(() => allGroups.value.length - groups.value.length);
 
@@ -67,6 +67,23 @@ const stats = computed(() => {
   const cal = d.session.calibratedAt ? `${(Number(d.session.calibrationOffsetNs) / 1e6).toFixed(1)} ms` : "Belum";
   return { impulses: d.impulses.length, groups: d.groups.length, confirmed, crossings: d.crossings.length, cal };
 });
+
+// ---------------------------------------------------------------- keterangan
+const editingNote = ref(false);
+const noteDraft = ref("");
+const noteInput = ref<HTMLInputElement | null>(null);
+async function editNote() {
+  noteDraft.value = session.value?.note ?? "";
+  editingNote.value = true;
+  await nextTick();
+  noteInput.value?.focus();
+}
+async function saveNote() {
+  if (await attempt(() => api("PUT", `/api/sessions/${props.sessionId}/note`, { note: noteDraft.value || null }), "Keterangan disimpan")) {
+    editingNote.value = false;
+    load();
+  }
+}
 
 let scrolled = false;
 async function load() {
@@ -123,9 +140,9 @@ onUnmounted(() => {
       <div class="grow">
         <h1 class="page-title">{{ session.label }}</h1>
         <div class="row" style="margin-top: 8px">
-          <span class="chip chip-brand">{{ CATEGORY[session.raceCategory].label }}</span>
-          <span v-if="session.heatId" class="chip">{{ CATEGORY[session.raceCategory].unit }} {{ session.heatId }}</span>
-          <span class="chip mono">Event {{ session.eventId }}</span>
+          <span v-if="session.raceCategory" class="chip chip-brand">{{ category(session.raceCategory).label }}</span>
+          <span v-if="session.heatId" class="chip">{{ category(session.raceCategory).unit }} {{ session.heatId }}</span>
+          <span class="chip" :title="`Id Event ${session.eventId}`">{{ session.eventName ?? `Event ${session.eventId}` }}</span>
           <span class="chip"><AppIcon name="camera" /> {{ session.cameraId }}</span>
           <span v-if="session.armed" class="status-pill status-live"><span class="dot" />AKTIF — menerima sinyal</span>
           <span v-else-if="session.status === 'open'" class="status-pill status-neutral"><span class="dot" />Terbuka</span>
@@ -134,7 +151,7 @@ onUnmounted(() => {
       </div>
       <div class="row">
         <button v-if="cameFrom === 'standby'" class="btn btn-primary" @click="emit('back')"><AppIcon name="arrowBack" /> Kembali ke Standby <kbd>S</kbd></button>
-        <button v-if="can('operator')" class="btn" :title="`Salin sesi ini untuk ${CATEGORY[session.raceCategory].unit.toLowerCase()} berikutnya & langsung aktifkan (N)`" @click="emit('next')"><AppIcon name="skipNext" /> {{ CATEGORY[session.raceCategory].unit }} berikutnya</button>
+        <button v-if="can('operator')" class="btn" title="Sesi baru untuk Event yang sama & langsung aktifkan (N)" @click="emit('next')"><AppIcon name="skipNext" /> Sesi berikutnya</button>
       </div>
       <div v-if="can('operator') && session.status === 'open'" class="row">
         <button v-if="!session.armed" class="btn btn-success" @click="setArmed(true)"><AppIcon name="play" /> Aktifkan</button>
@@ -152,7 +169,7 @@ onUnmounted(() => {
     <div v-if="otherArmed" class="alert alert-info switch-banner">
       <AppIcon name="sensors" />
       <span class="grow">Sesi <strong>{{ otherArmed.label }}</strong> sedang aktif ({{ otherArmed.progress.finishes }} finish). Sinyal baru masuk ke sana — sesi ini tetap bisa ditinjau.</span>
-      <button class="btn btn-sm btn-primary" @click="emit('open', otherArmed._id)">Buka heat aktif <kbd>A</kbd></button>
+      <button class="btn btn-sm btn-primary" @click="emit('open', otherArmed._id)">Buka sesi aktif <kbd>A</kbd></button>
     </div>
 
     <div v-if="todoGroups.length" class="alert alert-warn switch-banner">
@@ -161,9 +178,18 @@ onUnmounted(() => {
       <button class="btn btn-sm" @click="jumpToTodo">Ke tinjauan berikutnya</button>
     </div>
 
-    <div v-if="!session.bucket" class="alert alert-warn" style="margin: 0 0 16px">
-      <AppIcon name="warning" /><span>Sesi belum ditautkan ke Division / Race / Initial — hasil <strong>tidak</strong> diterapkan otomatis di sts-timingsystem.</span>
-    </div>
+    <section class="card note-card">
+      <AppIcon name="edit" />
+      <template v-if="editingNote">
+        <input ref="noteInput" v-model="noteDraft" class="input" maxlength="300" placeholder="Keterangan sesi, mis. R4 Putri · heat ulang" @keydown.enter="saveNote" @keydown.esc="editingNote = false" />
+        <button class="btn btn-sm btn-primary" @click="saveNote">Simpan</button>
+        <button class="btn btn-sm" @click="editingNote = false">Batal</button>
+      </template>
+      <template v-else>
+        <span class="grow" :class="{ hint: !session.note }">{{ session.note || "Belum ada keterangan" }}</span>
+        <button v-if="can('operator')" class="btn btn-sm btn-ghost" @click="editNote">{{ session.note ? "Ubah" : "Tambah keterangan" }}</button>
+      </template>
+    </section>
 
     <div class="stat-strip">
       <div class="stat-card"><span class="stat-card__icon"><AppIcon name="sensors" /></span><div><div class="stat-card__value">{{ stats.impulses }}</div><div class="stat-card__label">Sinyal masuk</div></div></div>
@@ -177,8 +203,6 @@ onUnmounted(() => {
         <span class="section-label" style="margin: 0">Lintasan</span>
         <span v-for="l in session.lanes.slice(0, 8)" :key="l.lane" class="lane"><span class="lane-id">{{ l.lane }}</span>{{ l.teamName ?? l.teamId }}<span v-if="l.bib" class="hint">#{{ l.bib }}</span></span>
         <span v-if="session.lanes.length > 8" class="hint">+{{ session.lanes.length - 8 }} tim lain</span>
-        <span class="spacer" />
-        <span v-if="session.bucket" class="hint mono">{{ session.bucket.divisionId }} · {{ session.bucket.raceId }} · {{ session.bucket.initialId }}</span>
       </div>
     </section>
 
@@ -219,6 +243,10 @@ onUnmounted(() => {
 .switch-banner .grow { flex: 1; }
 .switch-banner kbd { font: 700 0.7rem var(--mono); padding: 1px 5px; border-radius: 5px; border: 1px solid currentColor; opacity: 0.8; margin-left: 4px; }
 [id^="g-"] { scroll-margin-top: calc(var(--nav-h) + 70px); }
+.note-card { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
+.note-card .grow { flex: 1; color: var(--brand-ink); font-weight: 600; }
+.note-card .grow.hint { font-weight: 400; color: var(--faint); }
+.note-card .input { flex: 1; }
 .focused { box-shadow: 0 0 0 3px var(--warn), var(--shadow); }
 .group-filter { margin: 0 0 14px; }
 .lane { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }

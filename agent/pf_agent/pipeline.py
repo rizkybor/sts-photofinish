@@ -3,11 +3,15 @@
 Satu pipeline = kamera + ring buffer garis finish + photocell virtual + arsip
 frame. `reconfigure()` menghentikan pipeline lama, mencoba yang baru, dan bila
 gagal (mis. kamera tidak bisa dibuka) otomatis kembali ke pengaturan lama.
+Bila kamera tidak bisa dibuka sama sekali (dicabut, iPhone menjauh, dipakai
+aplikasi lain), `run_forever()` terus mencoba membukanya setiap beberapa detik —
+agent tetap tersambung sehingga sumber kamera bisa diganti dari web.
 """
 from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable
 
 from . import slitscan
@@ -19,6 +23,8 @@ from .settings import CameraSettings
 from .trigger import LineTrigger
 
 log = logging.getLogger(__name__)
+
+RETRY_S = 3.0
 
 
 class LatestFrame:
@@ -52,9 +58,44 @@ class Pipeline:
         self.size: tuple[int, int] | None = None
         self.last_error: str | None = None
         self.notice: str | None = None  # peringatan non-fatal (mis. garis finish disesuaikan)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._closed = threading.Event()
+        self._watchdog: threading.Thread | None = None
 
     # ------------------------------------------------------------ siklus hidup
+    def run_forever(self) -> None:
+        """Buka kamera sekarang bila bisa, lalu jaga di latar: bila tidak berjalan, coba lagi."""
+        self._try_start()
+        if self._watchdog is None:
+            self._watchdog = threading.Thread(target=self._watch, name="camera-watchdog", daemon=True)
+            self._watchdog.start()
+
+    def _try_start(self) -> bool:
+        with self._lock:
+            if self.camera is not None or self._closed.is_set():
+                return True
+            try:
+                self.start()
+                if self.last_error:
+                    log.info("Kamera %s berhasil dibuka", self.settings.source)
+                self.last_error = None
+                return True
+            except CameraError as err:
+                if str(err) != self.last_error:
+                    log.error("%s — mencoba lagi setiap %.0f dtk", err, RETRY_S)
+                self.last_error = str(err)
+                return False
+
+    def _watch(self) -> None:
+        while not self._closed.wait(RETRY_S):
+            if self.camera is None:
+                self._try_start()
+
+    def close(self) -> None:
+        self._closed.set()
+        with self._lock:
+            self.stop()
+
     def start(self) -> None:
         s = self.settings
         camera = CameraSource(s.source, s.fps, s.width, s.height)
@@ -117,10 +158,16 @@ class Pipeline:
                 self.settings = old
                 try:
                     self.start()
+                    self.last_error = str(err)
+                    return False, f"{err} — agent kembali ke pengaturan sebelumnya, perubahan tidak disimpan."
                 except CameraError as err2:
-                    log.error("Pengaturan lama juga gagal: %s", err2)
-                self.last_error = str(err)
-                return False, str(err)
+                    # Watchdog terus mencoba membuka kamera lama; status web menampilkannya.
+                    log.error("Pengaturan lama juga gagal: %s — terus mencoba", err2)
+                    self.last_error = f"Kamera sebelumnya juga tidak bisa dibuka: {err2}"
+                    return False, (
+                        f"{err} Kamera sebelumnya ({old.source_type} {old.source}) juga tidak bisa dibuka — "
+                        "agent terus mencoba membukanya. Periksa sambungan kamera atau pilih sumber lain."
+                    )
 
     # ------------------------------------------------------------ status untuk web
     def status(self) -> dict:
@@ -129,6 +176,7 @@ class Pipeline:
         return {
             "settings": self.settings.to_dict(),
             "running": self.camera is not None,
+            "retrying": self.camera is None and not self._closed.is_set(),
             "width": w, "height": h,
             "measuredFps": round(getattr(self.camera, "measured_fps", 0.0), 1) if self.camera else 0.0,
             # ms sejak frame terakhir — besar berarti kamera tidak mengirim gambar

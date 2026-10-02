@@ -27,7 +27,7 @@ const sockets: Socket[] = [];
 const cfg = () => loadConfig({
   NODE_ENV: "test", PF_PORT: "1", PF_MONGO_URL: mongo.getUri(), PF_MONGO_DB: "pf_e2e",
   PF_JWT_SECRET: SECRET, PF_HMAC_SECRET: SECRET, PF_FILE_URL_SECRET: SECRET, PF_CAPTURES_DIR: capturesDir,
-  PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000",
+  PF_GROUP_QUIET_MS: "200", PF_LOGIN_RATE_MAX: "1000", PF_TIMING_DB: "timing_e2e",
 });
 
 async function http<T = any>(method: string, url: string, token?: string, body?: unknown): Promise<{ status: number; data: T }> {
@@ -334,7 +334,7 @@ test("jam Photo Finish: kalibrasi admin, snapshot per rekaman, bukti lama tidak 
   timing.close();
 });
 
-test("frame RaceTime2 tanpa payload: waktu sinyal dari jam PF, bucket ikut ke timing", async () => {
+test("frame RaceTime2 tanpa payload: waktu sinyal dari jam PF; sesi cukup terhubung ke Event", async () => {
   const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
   const [op, juri, adm] = [await login("op"), await login("juri"), await login("adm")];
   const timing = await socket(issueToken({ sub: "device:timing:3", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
@@ -348,9 +348,23 @@ test("frame RaceTime2 tanpa payload: waktu sinyal dari jam PF, bucket ikut ke ti
   assert.equal(status.source, "manual");
   const offset = BigInt(status.effectiveOffsetNs);
 
-  const bucket = { divisionId: "div-r6", raceId: "race-putra", initialId: "init-open" };
-  const { data: session } = await http("POST", "/api/sessions", op, { eventId: "EVT-3", bucket, raceCategory: "RX", label: "RX heat 1", lanes: [{ lane: "1", teamId: "team-1", bib: "1" }] });
-  assert.deepEqual(session.bucket, bucket);
+  // Event di database sts-timingsystem (hanya dibaca untuk nama Event).
+  const eventId = new ObjectId();
+  await database.client.db("timing_e2e").collection("eventsCollection").insertOne({ _id: eventId, eventName: "Kejurnas Arung Jeram 2026", categoriesDivision: [{ name: "R6" }] });
+  const events = (await http("GET", "/api/events", op)).data;
+  assert.deepEqual(events.map((e: any) => [e.eventId, e.eventName]), [[eventId.toHexString(), "Kejurnas Arung Jeram 2026"]]);
+  assert.ok(!("categoriesDivision" in events[0]), "kategori event tidak dibaca");
+
+  const { data: session } = await http("POST", "/api/sessions", op, { eventId: eventId.toHexString(), raceCategory: "RX", label: "RX heat 1", lanes: [{ lane: "1", teamId: "team-1", bib: "1" }] });
+  assert.equal(session.eventName, "Kejurnas Arung Jeram 2026", "nama Event dicari dari Id Event");
+  assert.equal(session.bucket, undefined);
+
+  // Sesi manual cukup Event: tanpa format, heat, dan label (label dibuat otomatis)
+  const { data: simple } = await http("POST", "/api/sessions", op, { eventId: eventId.toHexString(), note: "R4 Putri" });
+  assert.equal(simple.raceCategory, null);
+  assert.equal(simple.heatId, null);
+  assert.match(simple.label, /^Kejurnas Arung Jeram 2026 · Sesi \d+$/);
+  assert.equal(simple.note, "R4 Putri");
   await http("POST", "/api/sessions/" + session._id + "/arm", op);
 
   const hostNs = nowEpochNs();
@@ -370,7 +384,8 @@ test("frame RaceTime2 tanpa payload: waktu sinyal dari jam PF, bucket ikut ke ti
   assert.equal(crossing.finishTime, imp.deviceTime);
   await http("POST", "/api/crossings/" + crossing._id + "/confirm", juri, { teamId: "team-1", crewInBoat: 4, crewExpected: 4, upright: true });
   await until(() => verified.length === 1);
-  assert.deepEqual(verified[0].bucket, bucket);
+  assert.equal(verified[0].eventId, eventId.toHexString());
+  assert.equal(verified[0].eventName, "Kejurnas Arung Jeram 2026");
   assert.equal(verified[0].raceCategory, "RX");
   agent.socket.close();
   timing.close();
@@ -404,33 +419,20 @@ test("standby kamera: cuplikan hanya untuk operator, agent nyala/mati sesuai pen
   agent.close();
 });
 
-test("timing: kirim heat → sesi dibuat & diaktifkan, kirim ulang memakai sesi yang sama", async () => {
+test("keterangan sesi: pembeda sesi dari admin/operator; timing tidak bisa membuat sesi", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const op = await login("op");
+  const { data: s } = await http("POST", "/api/sessions", op, { eventId: "EVT-N" });
+  assert.match(s.label, /^Event EVT-N · Sesi 1$/, "tanpa database timing: label memakai Id Event");
+  assert.equal((await http("PUT", `/api/sessions/${s._id}/note`, op, { note: "  R4 Putra  " })).data.note, "R4 Putra");
+  assert.equal((await database.col.sessions.findOne({ _id: new ObjectId(s._id) }))!.note, "R4 Putra");
+  assert.equal((await http("PUT", `/api/sessions/${s._id}/note`, await login("lihat"), { note: "x" })).status, 403);
+
+  // Fitur "Kirim heat" dihapus: pesan timing:session tidak lagi ditangani.
   const timing = await socket(issueToken({ sub: "device:timing:h", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
-  const heat = {
-    type: "timing:session", eventId: "EVT-H", bucket: { divisionId: "D", raceId: "R", initialId: "I" }, raceCategory: "H2H",
-    heatId: "R1-H2", label: "H2H R4 Putra · Babak 1 · Heat 2",
-    lanes: [
-      { lane: "A", teamId: "t-1", bib: "21", teamName: "Tim Satu", crewExpected: 4 },
-      { lane: "B", teamId: "t-2", bib: "22", teamName: null, crewExpected: 4 },
-    ],
-  };
-  const first = await timing.emitWithAck("timing:session", signPayload(heat, SECRET));
-  assert.equal(first.ok, true, first.error);
-  assert.equal(first.created, true);
-  const s = (await database.col.sessions.findOne({ _id: new ObjectId(first.sessionId) }))!;
-  assert.equal(s.armed, true);
-  assert.deepEqual(s.bucket, heat.bucket);
-  assert.equal(s.lanes[1]!.bib, "22");
-
-  // Heat sama dikirim lagi (mis. setelah ganti tim) → sesi yang sama, lintasan diperbarui
-  const again = await timing.emitWithAck("timing:session", signPayload({ ...heat, lanes: [heat.lanes[0]] }, SECRET));
-  assert.equal(again.sessionId, first.sessionId);
-  assert.equal(again.created, false);
-  assert.equal((await database.col.sessions.findOne({ _id: s._id }))!.lanes.length, 1);
-
-  // Payload diubah setelah ditandatangani → ditolak
-  const forged = { ...signPayload(heat, SECRET), heatId: "R1-H9" };
-  assert.equal((await timing.emitWithAck("timing:session", forged)).ok, false);
+  const res = await timing.timeout(800).emitWithAck("timing:session", signPayload({ type: "timing:session", eventId: "EVT-N", raceCategory: "H2H", heatId: null, label: "x", lanes: [] }, SECRET)).catch(() => null);
+  assert.equal(res, null, "tidak ada handler → tidak ada jawaban");
+  assert.equal(await database.col.sessions.countDocuments({ eventId: "EVT-N" }), 1);
   timing.close();
 });
 

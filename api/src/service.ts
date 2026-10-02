@@ -8,7 +8,7 @@ import { rm, unlink } from "node:fs/promises";
 import { fileSha256, readColumns, readFramesIndex, resolveCapturePath, signFileUrl } from "./files.js";
 import { findTies, pairByOrder } from "./pairing.js";
 import type { z } from "zod";
-import { AgentTrigger, TimingSessionRequest } from "./schemas.js";
+import { AgentTrigger } from "./schemas.js";
 import type { CalibrateBody, CameraConfig, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
 import {
   deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, NS_PER_SEC, nowEpochNs, officialClock, parseClock, toNs, wrapDay,
@@ -37,7 +37,42 @@ const oid = (id: string, what: string) => {
   return new ObjectId(id);
 };
 
-export function createService(cfg: Config, { col }: Database, audit: AuditLog, bus: Bus) {
+export function createService(cfg: Config, { col, client }: Database, audit: AuditLog, bus: Bus) {
+  // ---------------------------------------------------------------- event (sts-timingsystem)
+  // Sesi cukup terhubung ke Event lewat Id Event. Nama Event dibaca (read-only)
+  // dari eventsCollection milik sts-timingsystem di cluster yang sama;
+  // categoriesEvent/Division/Race/Initial sengaja TIDAK dibaca.
+  const timingEvents = cfg.PF_TIMING_DB ? client.db(cfg.PF_TIMING_DB).collection<{ _id: unknown; eventName?: string; startDateEvent?: unknown; endDateEvent?: unknown; statusEvent?: unknown }>("eventsCollection") : null;
+  let eventsCache: { at: number; list: Array<{ eventId: string; eventName: string; startDate: unknown; endDate: unknown; status: unknown }> } | null = null;
+
+  async function listEvents() {
+    if (!timingEvents) return [];
+    if (eventsCache && eventsCache.list.length && Date.now() - eventsCache.at < 30_000) return eventsCache.list;
+    const docs = await timingEvents.find({}, { projection: { eventName: 1, startDateEvent: 1, endDateEvent: 1, statusEvent: 1 } }).sort({ _id: -1 }).limit(200).toArray();
+    const list = docs.map((e) => ({ eventId: String(e._id), eventName: String(e.eventName ?? ""), startDate: e.startDateEvent ?? null, endDate: e.endDateEvent ?? null, status: e.statusEvent ?? null }));
+    eventsCache = { at: Date.now(), list };
+    return list;
+  }
+
+  /** Sesi lama (dibuat sebelum ada eventName) tetap tampil dengan nama Event — tanpa menulis DB. */
+  async function withEventName<T extends { eventId: string; eventName?: string | null }>(rows: T[]): Promise<T[]> {
+    if (rows.every((r) => r.eventName)) return rows;
+    const names = new Map((await listEvents().catch(() => [])).map((e) => [e.eventId, e.eventName]));
+    return rows.map((r) => (r.eventName ? r : { ...r, eventName: names.get(r.eventId) || null }));
+  }
+
+  /** Nama Event dari Id Event; null bila tidak ditemukan / database timing tidak dikonfigurasi. */
+  async function eventNameOf(eventId: string): Promise<string | null> {
+    try {
+      const hit = (await listEvents()).find((e) => e.eventId === eventId);
+      if (hit) return hit.eventName || null;
+      eventsCache = null; // event baru dibuat — muat ulang sekali
+      return (await listEvents()).find((e) => e.eventId === eventId)?.eventName || null;
+    } catch {
+      return null; // database timing tidak terjangkau — sesi tetap bisa dibuat
+    }
+  }
+
   const quietTimers = new Map<string, NodeJS.Timeout>();
   const gapNs = BigInt(cfg.PF_GROUP_GAP_MS) * NS_PER_MS;
 
@@ -288,7 +323,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     // di tabel Registration Id/Racetime + isi Buffer-Timer-Finish.
     bus.notifyTiming("photofinish:trigger", signPayload({
       type: "photofinish:trigger" as const,
-      impulseId: doc._id.toHexString(), sessionId: armed._id.toHexString(), eventId: armed.eventId, bucket: armed.bucket,
+      impulseId: doc._id.toHexString(), sessionId: armed._id.toHexString(), eventId: armed.eventId, eventName: armed.eventName ?? null,
       raceCategory: armed.raceCategory, heatId: armed.heatId, cameraId: data.cameraId, time: doc.deviceTime,
     }, cfg.PF_HMAC_SECRET));
     return { accepted: true, impulseId: doc._id.toHexString() };
@@ -400,8 +435,11 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   const changed = (sessionId: ObjectId) => bus.toStaff("sessions:changed", { sessionId: sessionId.toHexString() });
 
   async function createSession(p: Principal, body: z.infer<typeof SessionCreate>) {
+    const eventName = body.eventName || (await eventNameOf(body.eventId));
+    // Label otomatis: "<Nama Event> · Sesi N" — operator cukup memilih Event.
+    const label = body.label?.trim() || `${eventName ?? `Event ${body.eventId}`} · Sesi ${(await col.sessions.countDocuments({ eventId: body.eventId })) + 1}`;
     const doc: SessionDoc = {
-      _id: new ObjectId(), ...body, armed: false, status: "open", calibrationOffsetNs: "0", calibratedAt: null,
+      _id: new ObjectId(), ...body, label, eventName, armed: false, status: "open", calibrationOffsetNs: "0", calibratedAt: null,
       createdBy: p.sub, createdAt: new Date(),
     };
     await col.sessions.insertOne(doc);
@@ -420,31 +458,15 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     changed(s._id);
   }
 
-  /**
-   * Dari sts-timingsystem: sesi untuk heat yang sedang tampil dibuat (atau
-   * dipakai ulang bila heat yang sama sudah punya sesi terbuka) lalu diaktifkan.
-   */
-  async function sessionFromTiming(p: Principal, raw: unknown) {
-    if (!raw || typeof raw !== "object" || !verifyPayload(raw, cfg.PF_HMAC_SECRET)) throw new HttpError(401, "Tanda tangan HMAC tidak valid");
-    const req = TimingSessionRequest.parse(raw);
-    const existing = await col.sessions.findOne({
-      status: "open", eventId: req.eventId, raceCategory: req.raceCategory, heatId: req.heatId,
-      "bucket.divisionId": req.bucket.divisionId, "bucket.raceId": req.bucket.raceId, "bucket.initialId": req.bucket.initialId,
-    });
-    let session: SessionDoc;
-    if (existing) {
-      // Komposisi heat bisa berubah (mis. BYE/pengganti) — samakan dengan timing.
-      await col.sessions.updateOne({ _id: existing._id }, { $set: { label: req.label, lanes: req.lanes } });
-      await audit.append({ userId: p.sub, action: "session.sync-from-timing", entity: "session", entityId: existing._id.toHexString(), before: { label: existing.label, lanes: existing.lanes }, after: { label: req.label, lanes: req.lanes }, reason: null });
-      session = { ...existing, label: req.label, lanes: req.lanes };
-    } else {
-      session = await createSession(p, {
-        eventId: req.eventId, bucket: req.bucket, raceCategory: req.raceCategory, heatId: req.heatId,
-        label: req.label, lanes: req.lanes, cameraId: req.cameraId ?? "cam-1",
-      });
-    }
-    await armSession(p, session._id.toHexString(), true);
-    return { sessionId: session._id.toHexString(), label: session.label, created: !existing, lanes: session.lanes.length };
+  /** Keterangan bebas dari admin/operator (mis. "R4 Putri", "heat ulang") — pembeda sesi. */
+  async function setSessionNote(p: Principal, id: string, note: string | null) {
+    const s = await col.sessions.findOne({ _id: oid(id, "sessionId") });
+    if (!s) throw new HttpError(404, "Sesi tidak ditemukan");
+    const value = note?.trim() || null;
+    await col.sessions.updateOne({ _id: s._id }, { $set: { note: value } });
+    await audit.append({ userId: p.sub, action: "session.note", entity: "session", entityId: id, before: { note: s.note ?? null }, after: { note: value }, reason: null });
+    changed(s._id);
+    return { note: value };
   }
 
   async function closeSession(p: Principal, id: string) {
@@ -489,7 +511,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
    * mana yang masih punya finish berdekatan belum ditinjau tanpa membuka satu per satu.
    */
   async function sessionList() {
-    const sessions = await col.sessions.find().sort({ createdAt: -1 }).limit(100).toArray();
+    const sessions = await withEventName(await col.sessions.find().sort({ createdAt: -1 }).limit(100).toArray());
     const groups = await col.groups.find({ sessionId: { $in: sessions.filter((s) => s.status === "open").map((s) => s._id) } }).toArray();
     const states = await finishStates(groups);
     return sessions.map((s) => {
@@ -524,8 +546,9 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
 
   async function sessionDetail(id: string) {
     const _id = oid(id, "sessionId");
-    const session = await col.sessions.findOne({ _id });
-    if (!session) throw new HttpError(404, "Sesi tidak ditemukan");
+    const found = await col.sessions.findOne({ _id });
+    if (!found) throw new HttpError(404, "Sesi tidak ditemukan");
+    const [session] = await withEventName([found]);
     const [groups, impulses, captures, crossings] = await Promise.all([
       col.groups.find({ sessionId: _id }).sort({ createdAt: 1 }).toArray(),
       col.impulses.find({ sessionId: _id }).sort({ deviceTimeNs: 1 }).toArray(),
@@ -839,7 +862,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
     if (!s || c.status !== "confirmed" || !c.teamId || !c.finishTime || !c.officialTime || !c.timeSource) return false;
     const unsigned: Omit<PhotofinishVerified, "sig"> = {
       type: "photofinish:verified",
-      crossingId: c._id.toHexString(), sessionId: s._id.toHexString(), eventId: s.eventId, bucket: s.bucket, raceCategory: s.raceCategory,
+      crossingId: c._id.toHexString(), sessionId: s._id.toHexString(), eventId: s.eventId, eventName: s.eventName ?? null, raceCategory: s.raceCategory,
       heatId: s.heatId, teamId: c.teamId, bib: c.bib, rank: c.rank, finishTime: c.finishTime, officialTime: c.officialTime,
       timeSource: c.timeSource,
       penalties: {
@@ -864,7 +887,7 @@ export function createService(cfg: Config, { col }: Database, audit: AuditLog, b
   return {
     updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger,
     getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
-    createSession, sessionFromTiming, armSession, closeSession, sessionList, finishFeed, sessionDetail,
+    listEvents, createSession, setSessionNote, armSession, closeSession, sessionList, finishFeed, sessionDetail,
     addCapture, captureFrames, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,
     /** Hentikan timer kelompok finish saat API dimatikan. */

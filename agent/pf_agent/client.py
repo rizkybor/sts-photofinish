@@ -29,6 +29,9 @@ SYNC_BURST = 4
 WAIT_FOR_FRAMES_S = 10.0
 
 
+REJECT_GRACE_S = 1.0
+
+
 class AgentClient:
     def __init__(self, cfg: AgentConfig, pipeline: Pipeline | None = None, env_settings: CameraSettings | None = None) -> None:
         self.cfg = cfg
@@ -56,6 +59,15 @@ class AgentClient:
 
     def run(self) -> None:
         self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token, "cameraId": self.cfg.camera_id}, transports=["websocket"], wait_timeout=10)
+        # Tunggu sebentar: API menolak agent kedua untuk kamera yang sama segera
+        # setelah connect. Kamera baru dibuka SETELAH itu — agent duplikat tidak
+        # pernah merebut kamera dari agent yang sedang berjalan.
+        self._stop.wait(REJECT_GRACE_S)
+        if self.rejected:
+            raise SystemExit(f"Agent ditolak API: {self.rejected}")
+        if self.pipeline is not None:
+            self.pipeline.run_forever()
+            self._send_status()
         threading.Thread(target=self._sync_loop, name="clock-sync", daemon=True).start()
         threading.Thread(target=self._preview_loop, name="preview", daemon=True).start()
         threading.Thread(target=self._trigger_loop, name="trigger", daemon=True).start()

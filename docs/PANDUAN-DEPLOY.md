@@ -223,9 +223,9 @@ Bila ingin menjalankan per komponen secara manual: `npm run dev:api`,
 2. **Jam Photo Finish:** klik jam di navbar → **Set ke waktu** (jam sekarang / layar RaceTime2).
 3. **Standby Kamera:** gambar live tampil. Klik gambar di tiang/penanda finish,
    lalu cek indikator kelurusan **hijau**.
-4. **Siapkan heat:** di sts-timingsystem buka halaman H2H → **Kirim heat ke
-   Photo Finish** → pilih heat → **Kirim & aktifkan**.
-   Tanpa timing: **Sesi Lomba → Sesi baru → Aktifkan**.
+4. **Siapkan sesi:** di Photo Finish **Sesi Lomba → Sesi baru** → pilih **Event**
+   (Keterangan opsional) → **Buat & aktifkan**. Di sts-timingsystem cukup
+   pastikan badge **Photo Finish terhubung**.
 5. **Picu finish:** lewatkan benda (tangan, buku) melewati **garis tengah kamera**.
    - Photo Finish: **kelompok finish** baru muncul otomatis. Sekitar 3 detik
      kemudian, gambar **slit-scan** dan **foto frame** tampil.
@@ -340,19 +340,18 @@ untuk setiap finish. Bar heat di atas layar selalu menampilkan sesi yang
 | Finish **satu perahu** | Tidak ada. Feed menulis "Tercatat"; waktu resmi dari RaceTime2 |
 | Finish **berdekatan** (≥ 2 perahu dalam satu kelompok) | Bunyi + banner kuning **Finish berdekatan**. Tekan **Tinjau sekarang** (T): detail sesi terbuka tepat di finish itu |
 | Selesai meninjau | Banner hijau. **Kembali ke Standby** (S) |
-| Heat/run berikutnya | Dari timing: **Kirim heat** (bar heat pindah sendiri). Tanpa timing: **Heat berikutnya** (N): form terisi dari sesi aktif (nomor heat +1), **Enter** = buat & aktifkan, tetap di Standby |
-| Finish berdekatan heat lama belum ditinjau | Muncul di bar heat sebagai "Berdekatan belum ditinjau". Klik untuk meninjau kapan saja. Sinyal heat baru tetap masuk ke heat aktif |
+| Butuh sesi baru (opsional) | **Sesi berikutnya** (N): Event & kamera tersalin dari sesi aktif, isi Keterangan bila perlu, **Enter** = buat & aktifkan, tetap di Standby. Satu sesi boleh dipakai untuk banyak heat/kategori |
+| Finish berdekatan sesi lama belum ditinjau | Muncul di bar atas sebagai "Berdekatan belum ditinjau". Klik untuk meninjau kapan saja. Sinyal baru tetap masuk ke sesi aktif |
 
 Pintasan keyboard (di luar kolom isian): **T** tinjau finish berdekatan
-berikutnya · **S** Standby · **N** heat/run berikutnya · **A** detail sesi aktif.
+berikutnya · **S** Standby · **N** sesi berikutnya · **A** detail sesi aktif.
 
-**Satu sesi per format**
+**Sesi = Event**
 
-| Format | Satu sesi = | Catatan |
-|---|---|---|
-| H2H / Rafting Cross | satu heat (2 / 4 perahu) | Ganti sesi tiap heat (N atau Kirim heat dari timing) |
-| DRR | satu kategori | Semua perahu kategori itu finish di sesi yang sama. Detail sesi menampilkan **Berdekatan & perlu ditinjau** secara bawaan |
-| Sprint / Slalom | satu run per kategori (Run 1, Run 2) | Perahu finish satu per satu; jarang berdekatan |
+Sesi cukup terhubung ke **Event** — format lomba (H2H, RX, DRR, Sprint,
+Slalom), Division, Race, dan Initial tidak dipilih; penerapannya sama untuk
+semua. Label sesi dibuat otomatis ("<Nama Event> · Sesi N"). Bila perlu
+pembeda (mis. "R4 Putri · Heat 3"), tulis di **Keterangan** sesi.
 
 **Meninjau finish berdekatan**
 

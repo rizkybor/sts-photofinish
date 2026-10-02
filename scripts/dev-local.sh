@@ -53,6 +53,9 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+# Jendela terminal ditutup: tetap bersihkan, agar agent tidak tertinggal "yatim"
+# memegang kamera.
+trap 'exit 129' HUP
 
 start_bg() { # start_bg <nama> <perintah…> — latar belakang, log ke data/logs/<nama>.log
   # Dipanggil langsung (BUKAN di $(…) / subshell) agar tercatat untuk Ctrl+C.
@@ -77,7 +80,8 @@ wait_for() { # wait_for <detik> <perintah cek…>
 
 # Agent lain yang sedang berjalan — cek PERINTAH proses saja (ps args), bukan
 # environment (di macOS `pgrep -f` ikut mencocokkan env seperti `_=…/pf-agent`).
-agent_running() { ps -axo args= | grep -qE '^[^ ]*[Pp]ython[0-9.]* [^ ]*pf-agent( |$)'; }
+agent_pids() { ps -axo pid=,ppid=,args= | awk '$3 ~ /[Pp]ython[0-9.]*$/ && $4 ~ /pf-agent$/ && ($5 == "" || $5 ~ /^-/) {print $1 ":" $2}'; }
+agent_running() { [ -n "$(agent_pids)" ]; }
 
 # ---------------------------------------------------------------- 1. persiapan
 step "1. Memeriksa persiapan"
@@ -181,6 +185,10 @@ if [ $WITH_AGENT -eq 1 ]; then
   step "5. Agent kamera"
   if agent_running; then
     warn "Agent kamera lain sudah berjalan — tidak dijalankan lagi (satu kamera = satu agent)"
+    for entry in $(agent_pids); do
+      # Induk = launchd (1): sisa dari terminal/skrip yang sudah ditutup.
+      [ "${entry#*:}" = "1" ] && warn "Agent pid ${entry%%:*} tertinggal dari sesi sebelumnya. Bila kamera bermasalah: ${B}kill ${entry%%:*}${N} lalu jalankan ulang npm run dev:local"
+    done
     AGENT_NOTE="agent yang sudah berjalan"
   else
     if [ -z "${PF_DEVICE_TOKEN:-}" ]; then

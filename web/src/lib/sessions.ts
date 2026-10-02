@@ -102,13 +102,6 @@ export function beep() {
   } catch { /* browser menolak audio sebelum ada interaksi — abaikan */ }
 }
 
-/** Label berikutnya: angka terakhir dinaikkan ("Heat 3" → "Heat 4", "Run 1" → "Run 2"). */
-export function nextHeat(value: string | null): string {
-  if (!value) return "";
-  const m = value.match(/^(.*?)(\d+)(\D*)$/);
-  return m ? `${m[1]}${Number(m[2]) + 1}${m[3]}` : value;
-}
-
 /** Pintasan keyboard aman: abaikan saat mengetik atau saat dialog terbuka. */
 export function isTyping(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null;

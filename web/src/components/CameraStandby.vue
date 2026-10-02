@@ -2,7 +2,6 @@
 // Standby kamera: gambar live + garis imajiner tegak lurus untuk memastikan
 // kamera lurus terhadap garis finish/tiang photocell sebelum lomba.
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
-import { CATEGORY } from "../lib/labels";
 import { closeQueue, fmtGap, fmtTime } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
 import type { FinishEvent } from "../lib/types";
@@ -115,7 +114,7 @@ onUnmounted(() => {
     <span class="close-icon"><AppIcon name="compare" /></span>
     <div class="grow">
       <strong>Finish berdekatan — {{ closeQueue[0]!.boats }} perahu<template v-if="closeQueue[0]!.gapMs !== null">, selisih {{ fmtGap(closeQueue[0]!.gapMs) }}</template></strong>
-      <span>{{ CATEGORY[closeQueue[0]!.raceCategory].short }} · {{ closeQueue[0]!.sessionLabel }} · {{ fmtTime(closeQueue[0]!.createdAt) }}<template v-if="closeQueue.length > 1"> · +{{ closeQueue.length - 1 }} antre</template></span>
+      <span>{{ closeQueue[0]!.sessionLabel }} · {{ fmtTime(closeQueue[0]!.createdAt) }}<template v-if="closeQueue.length > 1"> · +{{ closeQueue.length - 1 }} antre</template></span>
     </div>
     <button class="btn btn-primary" @click="emit('review', closeQueue[0]!)">
       <AppIcon name="search" /> Tinjau sekarang <kbd>T</kbd>

@@ -34,16 +34,13 @@ def main() -> None:
         print(f"Frame {frame.shape[1]}x{frame.shape[0]} disimpan ke {out}")
         return
 
+    # Kamera dibuka oleh client setelah API menerima agent ini (lihat AgentClient.run).
     pipeline = Pipeline(CameraSettings.from_agent_config(cfg), cfg.buffer_seconds)
-    try:
-        pipeline.start()
-    except CameraError as err:
-        raise SystemExit(str(err)) from err
     client = AgentClient(cfg, pipeline)
     try:
         client.run()
     finally:
-        pipeline.stop()
+        pipeline.close()
 
 
 if __name__ == "__main__":

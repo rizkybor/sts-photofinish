@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // Feed "Finish terakhir" untuk operator yang standby di kamera: finish satu
 // perahu cukup tercatat; finish berdekatan ditandai dan bisa langsung ditinjau.
-import { CATEGORY } from "../lib/labels";
 import { fmtGap, fmtTime, prefs, sessions } from "../lib/sessions";
 import type { FinishEvent } from "../lib/types";
 import AppIcon from "./ui/AppIcon.vue";
@@ -28,7 +27,7 @@ function state(f: FinishEvent) {
         <span class="what">
           <strong>{{ f.boats > 1 ? `${f.boats} perahu berdekatan` : f.boats === 1 ? "1 perahu" : "Pemicu" }}</strong>
           <span v-if="f.close && f.gapMs !== null" class="gap">selisih {{ fmtGap(f.gapMs) }}</span>
-          <span class="where">{{ CATEGORY[f.raceCategory].short }} · {{ f.sessionLabel }}</span>
+          <span class="where">{{ f.sessionLabel }}</span>
         </span>
         <button v-if="f.close" class="btn btn-sm" :class="f.needsReview ? 'btn-warn' : 'btn-ghost'" @click="emit('review', f)">
           {{ f.needsReview ? "Tinjau" : "Lihat" }}

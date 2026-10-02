@@ -55,7 +55,7 @@ const currentId = computed(() => (view.value === "session" ? sessionId.value : n
 
 // ---------------------------------------------------------------- heat/run berikutnya
 const nextOpen = ref(false);
-/** Sumber salinan: heat yang sedang dibuka, lalu heat aktif, lalu sesi terbaru. */
+/** Sumber salinan: sesi yang sedang dibuka, lalu sesi aktif, lalu sesi terbaru. */
 const nextFrom = ref<Session | null>(null);
 function openNext() {
   if (!can("operator")) return;
