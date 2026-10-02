@@ -95,6 +95,9 @@ export async function buildApp(cfg: Config, database: Database) {
   app.put("/api/sessions/:id/note", { preHandler: guard.require("operator") }, async (req) =>
     service.setSessionNote(req.principal!, IdParam.parse(req.params).id, SessionNote.parse(req.body).note));
 
+  app.delete("/api/sessions/:id", { preHandler: guard.require("operator") }, async (req) =>
+    service.deleteSession(req.principal!, IdParam.parse(req.params).id));
+
   app.post("/api/sessions/:id/close", { preHandler: guard.require("operator") }, async (req) => {
     await service.closeSession(req.principal!, IdParam.parse(req.params).id);
     return { ok: true };

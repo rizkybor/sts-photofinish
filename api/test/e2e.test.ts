@@ -583,6 +583,54 @@ test("hapus tangkapan: file & tanda dihapus, sinyal RaceTime2 kembali tanpa sesi
   timing.close();
 });
 
+test("hapus sesi aktif/tidak aktif: tangkapan & file terhapus, sinyal kembali tanpa sesi, hasil juri dilindungi", async () => {
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const [op, juri, lihat] = [await login("op"), await login("juri"), await login("lihat")];
+  const agent = await fakeAgent(issueToken({ sub: "device:agent:sdel", name: "agent", role: "device", deviceKind: "agent" }, SECRET, "1h"));
+  const timing = await socket(issueToken({ sub: "device:timing:sdel", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h"));
+  timing.on("photofinish:verified", (_m: unknown, ack: (r: unknown) => void) => ack({ ok: true }));
+  const bootId = randomUUID();
+  const send = (seq: number) => timing.emitWithAck("timing:impulse", signPayload({ type: "timing:impulse", bootId, seq, channel: "FINISH", hostNs: nowEpochNs().toString() }, SECRET));
+
+  // Sesi AKTIF dengan satu tangkapan → bisa dihapus
+  const { data: active } = await http("POST", "/api/sessions", op, { eventId: "EVT-SDEL" });
+  await http("POST", `/api/sessions/${active._id}/arm`, op);
+  const imp = (await send(1)).impulseId;
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(active._id) })) === 1);
+  const cap = (await database.col.captures.findOne({ sessionId: new ObjectId(active._id) }))!;
+
+  assert.equal((await http("DELETE", `/api/sessions/${active._id}`, lihat)).status, 403, "viewer tidak boleh menghapus");
+  const del = await http("DELETE", `/api/sessions/${active._id}`, op);
+  assert.equal(del.status, 200, JSON.stringify(del.data));
+  assert.equal(del.data.wasArmed, true);
+  assert.equal(await database.col.sessions.countDocuments({ _id: new ObjectId(active._id) }), 0);
+  assert.equal(await database.col.groups.countDocuments({ sessionId: new ObjectId(active._id) }), 0);
+  assert.equal(await database.col.captures.countDocuments({ sessionId: new ObjectId(active._id) }), 0);
+  assert.equal(await database.col.sessions.countDocuments({ armed: true }), 0, "tidak ada sesi aktif lagi");
+  assert.equal((await database.col.impulses.findOne({ _id: new ObjectId(imp) }))!.sessionId, null, "sinyal RaceTime2 kembali tanpa sesi");
+  await assert.rejects(readFile(path.join(capturesDir, cap.file)), "file rekaman terhapus");
+  assert.ok(await database.col.audit.findOne({ action: "session.delete", entityId: active._id }));
+
+  // Sesi TIDAK AKTIF tanpa tangkapan → bisa dihapus
+  const { data: idle } = await http("POST", "/api/sessions", op, { eventId: "EVT-SDEL" });
+  assert.equal((await http("DELETE", `/api/sessions/${idle._id}`, op)).data.wasArmed, false);
+
+  // Ada hasil dikonfirmasi juri → ditolak
+  const { data: kept } = await http("POST", "/api/sessions", op, { eventId: "EVT-SDEL", lanes: [{ lane: "1", teamId: "t1" }] });
+  await http("POST", `/api/sessions/${kept._id}/arm`, op);
+  await send(2);
+  await until(async () => (await database.col.captures.countDocuments({ sessionId: new ObjectId(kept._id) })) === 1);
+  const cap2 = (await database.col.captures.findOne({ sessionId: new ObjectId(kept._id) }))!;
+  const { data: c } = await http("POST", "/api/crossings", op, { captureId: cap2._id.toHexString(), column: 3, rank: 1, lane: "1" });
+  await http("POST", `/api/crossings/${c._id}/confirm`, juri, { teamId: "t1", crewInBoat: 4, crewExpected: 4, upright: true });
+  const blocked = await http("DELETE", `/api/sessions/${kept._id}`, op);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.error, /dikonfirmasi juri/);
+  assert.equal(await database.col.sessions.countDocuments({ _id: new ObjectId(kept._id) }), 1);
+  agent.socket.close();
+  timing.close();
+});
+
 test("frame utuh: dipetakan ke kolom slit-scan, diverifikasi hash, ikut terhapus", async () => {
   const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
   const op = await login("op");

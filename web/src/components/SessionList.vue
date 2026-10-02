@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { can } from "../lib/api";
 import { category } from "../lib/labels";
-import { armedSession, loadSessions, sessions } from "../lib/sessions";
+import { armedSession, deleteSessionWithConfirm, loadSessions, sessions } from "../lib/sessions";
 import type { SessionSummary } from "../lib/types";
 import AppIcon from "./ui/AppIcon.vue";
 
@@ -91,7 +91,13 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
               <span v-else class="hint">—</span>
             </td>
             <td class="tnum">{{ fmtDate(s.createdAt) }}</td>
-            <td style="text-align: right; color: var(--faint)"><AppIcon name="chevron" size="20" /></td>
+            <td class="row-actions">
+              <button
+                v-if="can('operator') && s.status === 'open'" class="btn btn-sm btn-ghost del" :title="`Hapus ${s.label}`"
+                @click.stop="deleteSessionWithConfirm(s)"
+              ><AppIcon name="del" /></button>
+              <AppIcon name="chevron" size="20" />
+            </td>
           </tr>
         </tbody>
       </table>
@@ -110,5 +116,9 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
 .chip-warn { background: var(--warn-bg); color: var(--warn-ink); }
 .chip-ok { background: var(--ok-bg); color: var(--ok-ink); }
 .row-live td { background: var(--bad-bg); }
+.row-actions { text-align: right; color: var(--faint); white-space: nowrap; }
+.row-actions .del { color: var(--bad-ink); opacity: 0; transition: opacity 0.15s; }
+tr:hover .row-actions .del, .row-actions .del:focus-visible { opacity: 1; }
+@media (hover: none) { .row-actions .del { opacity: 1; } }
 .note { font-size: 0.8rem; color: var(--brand-ink); font-weight: 600; }
 </style>

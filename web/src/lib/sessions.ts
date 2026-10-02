@@ -5,6 +5,7 @@ import { computed, reactive, watch } from "vue";
 import { api, auth } from "./api";
 import { getSocket } from "./socket";
 import type { FinishEvent, SessionSummary } from "./types";
+import { attempt, confirmDialog } from "./ui";
 
 export const sessions = reactive<{ list: SessionSummary[]; feed: FinishEvent[]; loaded: boolean; error: string | null }>({
   list: [], feed: [], loaded: false, error: null,
@@ -110,3 +111,21 @@ export function isTyping(e: KeyboardEvent) {
 
 export const fmtTime = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 export const fmtGap = (ms: number | null) => (ms === null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2).replace(".", ",")} dtk`);
+
+/**
+ * Hapus sesi (aktif maupun tidak aktif) setelah konfirmasi. Ditolak API bila
+ * ada hasil yang sudah dikonfirmasi juri. Mengembalikan true bila terhapus.
+ */
+export async function deleteSessionWithConfirm(s: { _id: string; label: string; armed: boolean }): Promise<boolean> {
+  const ok = await confirmDialog({
+    title: "Hapus sesi?", danger: true, okText: "Hapus sesi",
+    text: `${s.label} beserta semua tangkapan, foto frame, dan tanda perahu akan dihapus permanen.` +
+      (s.armed ? " Sesi ini sedang AKTIF — setelah dihapus, sinyal RaceTime2 masuk ke daftar \"tanpa sesi\" sampai ada sesi lain yang diaktifkan." : "") +
+      " Sinyal RaceTime2 tidak hilang. Sesi dengan hasil yang sudah dikonfirmasi juri tidak bisa dihapus.",
+  });
+  if (!ok) return false;
+  const res = await attempt(() => api("DELETE", `/api/sessions/${s._id}`), "Sesi dihapus");
+  if (res === undefined) return false;
+  void loadSessions();
+  return true;
+}

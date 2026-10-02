@@ -207,6 +207,13 @@ export const CameraConfig = z.object({
   finishLine: z.object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() }).nullable(),
   trigger: z.object({ enabled: z.boolean(), threshold: z.number().min(5).max(150), minRun: z.number().min(0.01).max(0.5) }),
   frames: z.object({ enabled: z.boolean(), fps: z.number().min(1).max(120), width: z.number().int().min(320).max(3840) }),
+  /** Filter objek (YOLO): pemicu photocell hanya diteruskan bila objek kelas ini melintas. Divalidasi ulang oleh agent. */
+  objectFilter: z.object({
+    enabled: z.boolean(),
+    classes: z.array(z.string().regex(/^[\w][\w .-]{0,39}$/)).min(1).max(10),
+    model: z.string().min(1).max(120),
+    conf: z.number().min(0.05).max(0.95),
+  }).optional(),
 });
 export type CameraConfig = z.infer<typeof CameraConfig>;
 

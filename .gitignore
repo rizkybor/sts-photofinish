@@ -25,3 +25,9 @@ data/mongo/
 
 # Log uji lokal (scripts/dev-local.sh)
 data/logs/
+
+# Model filter objek (unduhan/hasil latih — besar, tidak masuk git) & dataset latih
+data/models/
+data/dataset/
+runs/
+agent/runs/

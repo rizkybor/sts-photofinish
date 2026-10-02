@@ -18,10 +18,17 @@ interface Config {
   finishLine: Line | null;
   trigger: { enabled: boolean; threshold: number; minRun: number };
   frames: { enabled: boolean; fps: number; width: number };
+  objectFilter?: ObjectFilterConfig;
+}
+interface ObjectFilterConfig { enabled: boolean; classes: string[]; model: string; conf: number }
+interface ObjectFilterStatus {
+  enabled: boolean; ready?: boolean; error?: string | null; classes?: string[]; model?: string; modelClasses?: string[];
+  passed?: number; rejected?: number; lastLabel?: string | null; lastRejected?: string | null; lastMs?: number | null;
 }
 interface Status {
   cameraId: string; connected?: boolean; running?: boolean; width?: number; height?: number; measuredFps?: number;
   finishLine?: Line | null; lastError?: string | null; settings?: Config; lastFrameAgeMs?: number | null; notice?: string | null; retrying?: boolean;
+  objectFilter?: ObjectFilterStatus; detector?: { available: boolean; models: string[] };
 }
 interface CameraRow { cameraId: string; connected: boolean; status: Status | null; saved: { config: Config; revision: number; updatedAt: string } | null }
 interface ScanResult { cameras: Array<{ index: number; width: number; height: number; inUse: boolean }>; deviceNames: string[]; videos: string[] }
@@ -53,7 +60,41 @@ const scanResult = ref<ScanResult | null>(null);
 const form = reactive<Config>({
   sourceType: "laptop", source: "0", fps: 30, width: null, height: null, finishLine: null,
   trigger: { enabled: true, threshold: 30, minRun: 0.06 }, frames: { enabled: true, fps: 30, width: 1280 },
+  objectFilter: { enabled: false, classes: ["boat"], model: "yolo11n.pt", conf: 0.35 },
 });
+
+// ---------------------------------------------------------------- filter objek
+/** Kelas umum model bawaan (COCO). Model hasil latih ulang punya kelasnya sendiri (mis. raft). */
+const OBJECT_PRESETS: Array<{ cls: string; label: string }> = [
+  { cls: "boat", label: "Perahu" }, { cls: "motorcycle", label: "Motor" }, { cls: "bicycle", label: "Sepeda" },
+  { cls: "car", label: "Mobil" }, { cls: "person", label: "Orang" },
+];
+const BUILTIN_MODEL_LABEL: Record<string, string> = { "yolo11n.pt": "bawaan · cepat", "yolo11s.pt": "bawaan · lebih akurat" };
+const customClass = ref("");
+const of = computed(() => form.objectFilter!);
+const filterStatus = computed(() => status.value?.objectFilter ?? null);
+const detector = computed(() => status.value?.detector ?? null);
+/** Kelas yang ditawarkan: kelas model (bila sudah dimuat & model kustom) atau preset umum. */
+const classOptions = computed(() => {
+  const fromModel = filterStatus.value?.model === of.value.model ? filterStatus.value?.modelClasses ?? [] : [];
+  const custom = fromModel.length && !BUILTIN_MODEL_LABEL[of.value.model]
+    ? fromModel.map((c) => ({ cls: c, label: c }))
+    : OBJECT_PRESETS;
+  const extra = of.value.classes.filter((c) => !custom.some((o) => o.cls === c)).map((c) => ({ cls: c, label: c }));
+  return [...custom, ...extra];
+});
+function toggleClass(c: string) {
+  const list = of.value.classes;
+  const i = list.indexOf(c);
+  if (i >= 0) list.splice(i, 1);
+  else if (list.length < 10) list.push(c);
+}
+function addCustomClass() {
+  const c = customClass.value.trim();
+  if (!/^[\w][\w .-]{0,39}$/.test(c)) return toast("warning", "Nama kelas tidak valid", "Huruf/angka, mis. raft atau perahu_karet");
+  if (!of.value.classes.includes(c)) of.value.classes.push(c);
+  customClass.value = "";
+}
 const lineMode = ref<"auto" | "manual">("auto");
 const pickPoints = ref<Array<{ x: number; y: number }>>([]);
 const showAdvanced = ref(false);
@@ -72,7 +113,7 @@ const lineTilt = computed(() => (form.finishLine ? tiltFromVerticalDeg(form.fini
 function loadForm(c: CameraRow | null) {
   const cfg = c?.saved?.config ?? c?.status?.settings;
   if (!cfg) return;
-  Object.assign(form, JSON.parse(JSON.stringify(cfg)));
+  Object.assign(form, { objectFilter: { enabled: false, classes: ["boat"], model: "yolo11n.pt", conf: 0.35 } }, JSON.parse(JSON.stringify(cfg)));
   lineMode.value = form.finishLine ? "manual" : "auto";
   pickPoints.value = [];
 }
@@ -144,6 +185,7 @@ async function apply() {
   if (form.sourceType === "ip" && !/^(https?|rtsp):\/\//.test(form.source)) return toast("warning", "Alamat kamera IP belum benar", "Harus diawali http://, https://, atau rtsp://");
   if (form.sourceType === "video" && !form.source.trim()) return toast("warning", "Pilih file video", "Klik Muat daftar lalu pilih video dari data/test-video/");
   if (lineMode.value === "manual" && !form.finishLine) return toast("warning", "Garis finish belum ditentukan", "Klik dua titik pada gambar, atau pilih Otomatis");
+  if (of.value.enabled && !of.value.classes.length) return toast("warning", "Pilih jenis objek", "Minimal satu, mis. Perahu");
   busy.value = "apply";
   result.value = { kind: "info", text: "Agent sedang membuka kamera dengan pengaturan baru…" };
   try {
@@ -439,6 +481,52 @@ const shortPath = (p: string) => p.split("/").slice(-2).join("/");
           </div>
         </template>
 
+        <h2 class="card-title" style="margin-top: 22px"><AppIcon name="target" /> Filter objek</h2>
+        <label class="switch-row">
+          <span><strong>Teruskan pemicu hanya bila objek ini yang melintas</strong><small>Orang lewat, burung, ranting, riak & bayangan diabaikan otomatis. Waktu finish tetap dari photocell.</small></span>
+          <input v-model="of.enabled" type="checkbox" class="switch" :disabled="!form.trigger.enabled" />
+        </label>
+        <p v-if="!form.trigger.enabled" class="hint" style="margin: 6px 0 0">Aktifkan photocell virtual dulu — filter memeriksa pemicunya.</p>
+        <template v-else-if="of.enabled">
+          <div v-if="detector && !detector.available" class="alert alert-warn" style="margin-top: 10px">
+            <AppIcon name="warning" />
+            <span>Paket deteksi belum terpasang di laptop agent. Jalankan <code>cd agent &amp;&amp; .venv/bin/pip install -e ".[detect]"</code> lalu restart agent. Sampai itu, semua pemicu tetap diteruskan.</span>
+          </div>
+          <div class="field-label" style="margin: 12px 0 6px">Jenis objek</div>
+          <div class="chips">
+            <button
+              v-for="o in classOptions" :key="o.cls" type="button" class="chip-toggle" :class="{ on: of.classes.includes(o.cls) }"
+              :title="o.cls" @click="toggleClass(o.cls)"
+            >{{ o.label }}<small v-if="o.label !== o.cls">{{ o.cls }}</small></button>
+            <span class="custom-class">
+              <input v-model="customClass" class="input input-sm" placeholder="kelas lain, mis. raft" @keydown.enter.prevent="addCustomClass" />
+              <button type="button" class="btn btn-sm" @click="addCustomClass"><AppIcon name="add" /></button>
+            </span>
+          </div>
+          <div class="grid-2" style="margin-top: 12px">
+            <label class="field"><span class="field-label">Model</span>
+              <select v-model="of.model" class="input">
+                <option v-for="m in detector?.models ?? ['yolo11n.pt', 'yolo11s.pt']" :key="m" :value="m">{{ m }}{{ BUILTIN_MODEL_LABEL[m] ? ` (${BUILTIN_MODEL_LABEL[m]})` : " (latih ulang)" }}</option>
+              </select>
+            </label>
+            <label class="field"><span class="field-label">Keyakinan minimal: {{ Math.round(of.conf * 100) }}%</span>
+              <input v-model.number="of.conf" type="range" min="0.15" max="0.8" step="0.05" />
+            </label>
+          </div>
+          <p class="hint" style="margin: 6px 0 0">Model bawaan mengenal "boat" secara umum; <strong>perahu karet</strong> lebih andal dengan model hasil latih ulang dari foto lomba Anda (taruh di <code>data/models/</code>).</p>
+          <div v-if="filterStatus?.enabled" class="filter-stats">
+            <span v-if="filterStatus.error" class="status-pill status-danger"><span class="dot" />{{ filterStatus.error }}</span>
+            <span v-else-if="!filterStatus.ready" class="status-pill status-upcoming"><span class="dot" />Memuat model…</span>
+            <template v-else>
+              <span class="chip chip-ok">Lolos {{ filterStatus.passed }}</span>
+              <span class="chip">Diabaikan {{ filterStatus.rejected }}</span>
+              <span v-if="filterStatus.lastLabel" class="hint">terakhir lolos: <strong>{{ filterStatus.lastLabel }}</strong></span>
+              <span v-if="filterStatus.lastRejected" class="hint">terakhir diabaikan: {{ filterStatus.lastRejected }}</span>
+              <span v-if="filterStatus.lastMs" class="hint">· {{ filterStatus.lastMs }} ms</span>
+            </template>
+          </div>
+        </template>
+
         <h2 class="card-title" style="margin-top: 22px"><AppIcon name="camera" /> Foto frame</h2>
         <label class="switch-row">
           <span><strong>Simpan foto kamera utuh di sekitar finish</strong><small>Untuk tinjauan frame demi frame (proporsi asli, tidak gepeng)</small></span>
@@ -499,6 +587,16 @@ const shortPath = (p: string) => p.split("/").slice(-2).join("/");
 </template>
 
 <style scoped>
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip-toggle { all: unset; cursor: pointer; display: inline-flex; align-items: baseline; gap: 5px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface); font-weight: 600; font-size: 0.86rem; color: var(--text-2); }
+.chip-toggle small { font: 500 0.7rem var(--mono); color: var(--faint); }
+.chip-toggle.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.chip-toggle.on small { color: rgba(255, 255, 255, 0.75); }
+.custom-class { display: inline-flex; gap: 4px; }
+.custom-class .input { width: 170px; }
+.filter-stats { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.chip-ok { background: var(--ok-bg); color: var(--ok-ink); }
+
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr); gap: 20px; align-items: start; }
 .col-preview { position: sticky; top: calc(var(--nav-h) + 16px); }
 .card-title { font-size: 1rem; margin-bottom: 12px; }

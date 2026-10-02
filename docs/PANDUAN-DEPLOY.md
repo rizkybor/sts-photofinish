@@ -108,6 +108,7 @@ for i in range(4):
 | `PF_TRIGGER_THRESHOLD` / `PF_TRIGGER_MIN_RUN` | 30 / 0.06 | Naikkan bila riak atau bayangan ikut memicu; turunkan bila perahu terlewat |
 | `PF_FRAMES` | `on` | Simpan **foto frame** utuh (tinjauan frame demi frame) |
 | `PF_FRAMES_FPS` / `PF_FRAMES_WIDTH` | 60 / 1280 | Turunkan bila laptop berat atau koneksi lambat |
+| `PF_OBJECT_FILTER` | kosong | **Filter objek** (YOLO): pemicu hanya diteruskan bila objek ini melintas, mis. `boat` atau `motorcycle`. Lihat **[PANDUAN-FILTER-OBJEK.md](PANDUAN-FILTER-OBJEK.md)** (pemasangan & latih ulang untuk perahu karet) |
 
 - **iPhone:** Apple ID sama dengan Mac, Wi-Fi + Bluetooth nyala, iPhone
   **landscape, diam (tripod), terkunci**.
@@ -363,6 +364,7 @@ pembeda (mis. "R4 Putri · Heat 3"), tulis di **Keterangan** sesi.
 | 3 | Juri | **Konfirmasi** tiap perahu: jumlah awak, posisi perahu, melintas 2× |
 | 4 | — | **Finish Time terisi otomatis** di timing. Penalti finish yang dicatat juri diterapkan operator timing |
 | 5 | Operator PF | Tangkapan palsu (orang lewat) → **Hapus**. Yang sudah dikonfirmasi juri tidak bisa dihapus |
+| 6 | Operator PF | Sesi salah/uji (aktif maupun tidak aktif) → **Hapus** di detail sesi atau ikon tempat sampah di daftar. Tangkapan & foto ikut terhapus, sinyal RaceTime2 kembali ke "tanpa sesi". Sesi dengan hasil terkonfirmasi juri tidak bisa dihapus — **Tutup sesi** saja |
 
 **Setelah lomba: backup**
 

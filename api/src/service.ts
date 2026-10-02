@@ -469,6 +469,28 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     return { note: value };
   }
 
+  /**
+   * Hapus sesi yang masih terbuka (aktif maupun tidak aktif) — mis. sesi uji
+   * atau salah pilih Event. Aturannya sama dengan hapus tangkapan: ditolak
+   * bila ada hasil yang sudah dikonfirmasi juri (barang bukti); sinyal
+   * RaceTime2 tidak hilang, dikembalikan ke daftar "tanpa sesi".
+   */
+  async function deleteSession(p: Principal, id: string) {
+    const s = await getOpenSession(id);
+    if (await col.crossings.countDocuments({ sessionId: s._id, revision: { $gt: 0 } })) {
+      throw new HttpError(409, "Sesi punya hasil yang sudah dikonfirmasi juri — tidak bisa dihapus (barang bukti). Tutup sesi saja.");
+    }
+    for (const g of await col.groups.find({ sessionId: s._id }).toArray()) await deleteGroup(p, g._id.toHexString());
+    // Sinyal yang belum masuk kelompok finish (jarang) ikut dikembalikan.
+    const loose = await col.impulses.updateMany({ sessionId: s._id }, { $set: { sessionId: null, groupId: null } });
+    await col.sessions.deleteOne({ _id: s._id });
+    await rm(resolveCapturePath(cfg.PF_CAPTURES_DIR, s._id.toHexString()), { recursive: true, force: true }).catch(() => undefined);
+    await audit.append({ userId: p.sub, action: "session.delete", entity: "session", entityId: id, before: s, after: null, reason: null });
+    if (s.armed) bus.toStaff("session:armed", { sessionId: null });
+    changed(s._id);
+    return { deleted: true, wasArmed: s.armed, impulsesReturned: loose.modifiedCount };
+  }
+
   async function closeSession(p: Principal, id: string) {
     const s = await getOpenSession(id);
     await col.sessions.updateOne({ _id: s._id }, { $set: { status: "closed", armed: false } });
@@ -887,7 +909,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
   return {
     updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger,
     getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
-    listEvents, createSession, setSessionNote, armSession, closeSession, sessionList, finishFeed, sessionDetail,
+    listEvents, createSession, setSessionNote, armSession, closeSession, deleteSession, sessionList, finishFeed, sessionDetail,
     addCapture, captureFrames, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,
     /** Hentikan timer kelompok finish saat API dimatikan. */

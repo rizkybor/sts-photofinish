@@ -18,6 +18,7 @@ from . import slitscan
 from .camera import CameraError, CameraSource
 from .clock import now_ns
 from .frames import FrameArchive
+from .objfilter import ObjectFilter, detector_available, list_models
 from .ringbuffer import LineRing
 from .settings import CameraSettings
 from .trigger import LineTrigger
@@ -54,6 +55,7 @@ class Pipeline:
         self.ring: LineRing | None = None
         self.archive: FrameArchive | None = None
         self.trigger: LineTrigger | None = None
+        self.object_filter: ObjectFilter | None = None
         self.finish_line: slitscan.FinishLine | None = None  # garis efektif (otomatis = tengah)
         self.size: tuple[int, int] | None = None
         self.last_error: str | None = None
@@ -115,6 +117,13 @@ class Pipeline:
         ring = LineRing(capacity, line_len=len(coords[0]), channels=first.shape[2] if first.ndim == 3 else 1)
         archive = FrameArchive(s.frames, s.fps) if s.frames else None
         trigger = LineTrigger(s.trigger) if s.trigger else None
+        # Filter objek hanya bermakna bila photocell virtual aktif (ia memeriksa pemicunya).
+        object_filter = ObjectFilter(s.object_filter, self.latest.get) if (s.object_filter and trigger) else None
+        line_x = (line.x1 + line.x2) / 2
+
+        def emit(ts: int) -> None:
+            if self.on_trigger:
+                self.on_trigger(ts)
 
         def on_frame(ts: int, frame) -> None:
             sample = slitscan.sample_line(frame, coords)
@@ -124,15 +133,22 @@ class Pipeline:
                 archive.push(ts, frame)
             if trigger is not None:
                 fired = trigger.update(ts, sample)
-                if fired is not None and self.on_trigger:
-                    self.on_trigger(fired)
+                if fired is not None:
+                    if object_filter is not None:
+                        object_filter.submit(fired, frame, line_x, emit)
+                    else:
+                        emit(fired)
 
-        self.camera, self.ring, self.archive, self.trigger = camera, ring, archive, trigger
+        if object_filter is not None:
+            object_filter.start()
+        self.camera, self.ring, self.archive, self.trigger, self.object_filter = camera, ring, archive, trigger, object_filter
         self.finish_line, self.size = line, (w, h)
         camera.start(on_frame)
         log.info("Kamera %s (%s) %dx%d, buffer %d frame (%.0f dtk @ %.0f fps)", s.source, s.source_type, w, h, capacity, self.buffer_seconds, s.fps)
         if archive:
             log.info("Arsip frame utuh AKTIF (%.0f fps, lebar %d px)", archive.fps, s.frames.width)
+        if object_filter:
+            log.info("Filter objek AKTIF: %s (model %s) — memuat model di latar", ", ".join(s.object_filter.classes), s.object_filter.model)
         if trigger:
             log.info("Photocell virtual AKTIF (ambang %.0f, rangkaian min %.0f%% garis)", s.trigger.threshold, s.trigger.min_run * 100)
 
@@ -141,6 +157,9 @@ class Pipeline:
             self.camera.stop()
         if self.archive:
             self.archive.stop()
+        if self.object_filter:
+            self.object_filter.stop()
+            self.object_filter = None
         self.camera = None
 
     def reconfigure(self, new: CameraSettings) -> tuple[bool, str | None]:
@@ -184,4 +203,6 @@ class Pipeline:
             "finishLine": None if fl is None else {"x1": fl.x1, "y1": fl.y1, "x2": fl.x2, "y2": fl.y2},
             "lastError": self.last_error,
             "notice": self.notice,
+            "objectFilter": self.object_filter.status() if self.object_filter else {"enabled": False},
+            "detector": {"available": detector_available(), "models": list_models()},
         }

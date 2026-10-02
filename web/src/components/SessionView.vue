@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { api, can } from "../lib/api";
 import { category } from "../lib/labels";
-import { armedSession, sessions } from "../lib/sessions";
+import { armedSession, deleteSessionWithConfirm, sessions } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
 import type { Crossing, Group, SessionDetail } from "../lib/types";
 import { attempt, confirmDialog, toast } from "../lib/ui";
@@ -103,6 +103,10 @@ async function setArmed(armed: boolean) {
   if (await attempt(() => api("POST", `/api/sessions/${props.sessionId}/${armed ? "arm" : "disarm"}`), armed ? "Sesi aktif — sinyal RaceTime2 masuk ke sesi ini" : "Sesi dinonaktifkan")) load();
 }
 
+async function removeSession() {
+  if (session.value && (await deleteSessionWithConfirm(session.value))) emit("back");
+}
+
 async function closeSession() {
   const pending = sessions.list.find((s) => s._id === props.sessionId)?.progress.pending ?? todoGroups.value.length;
   const ok = await confirmDialog({
@@ -157,6 +161,7 @@ onUnmounted(() => {
         <button v-if="!session.armed" class="btn btn-success" @click="setArmed(true)"><AppIcon name="play" /> Aktifkan</button>
         <button v-else class="btn" @click="setArmed(false)"><AppIcon name="stop" /> Nonaktifkan</button>
         <button class="btn btn-danger" @click="closeSession"><AppIcon name="lock" /> Tutup sesi</button>
+        <button class="btn btn-ghost btn-danger-text" title="Hapus sesi beserta tangkapannya" @click="removeSession"><AppIcon name="del" /> Hapus</button>
       </div>
     </div>
 
@@ -243,6 +248,8 @@ onUnmounted(() => {
 .switch-banner .grow { flex: 1; }
 .switch-banner kbd { font: 700 0.7rem var(--mono); padding: 1px 5px; border-radius: 5px; border: 1px solid currentColor; opacity: 0.8; margin-left: 4px; }
 [id^="g-"] { scroll-margin-top: calc(var(--nav-h) + 70px); }
+.btn-danger-text { color: var(--bad-ink); }
+.btn-danger-text:hover { background: var(--bad-bg); }
 .note-card { display: flex; align-items: center; gap: 10px; padding: 12px 16px; }
 .note-card .grow { flex: 1; color: var(--brand-ink); font-weight: 600; }
 .note-card .grow.hint { font-weight: 400; color: var(--faint); }

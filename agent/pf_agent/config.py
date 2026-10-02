@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .slitscan import FinishLine
 from .frames import FrameArchiveConfig
+from .objfilter import ObjectFilterConfig
 from .trigger import TriggerConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +27,7 @@ class AgentConfig:
     trigger: TriggerConfig | None  # None = photocell virtual mati
     frames: FrameArchiveConfig | None  # None = arsip frame utuh mati
     upload_captures: bool  # True = API di mesin lain (VPS): file rekaman diunggah lewat HTTP
+    object_filter: ObjectFilterConfig | None = None  # None = semua pemicu photocell diteruskan
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "AgentConfig":
@@ -59,4 +61,10 @@ class AgentConfig:
                 seconds=float(e.get("PF_BUFFER_SECONDS", "20")),
             ) if e.get("PF_FRAMES", "on").lower() not in ("off", "0", "false") else None,
             upload_captures=e.get("PF_UPLOAD_CAPTURES", "off").lower() in ("on", "1", "true"),
+            # PF_OBJECT_FILTER=boat,motorcycle → hanya pemicu dari objek kelas ini yang diteruskan
+            object_filter=ObjectFilterConfig(
+                classes=tuple(c.strip() for c in e["PF_OBJECT_FILTER"].split(",") if c.strip()),
+                model=e.get("PF_OBJECT_MODEL", "yolo11n.pt"),
+                conf=float(e.get("PF_OBJECT_CONF", "0.35")),
+            ) if e.get("PF_OBJECT_FILTER", "").strip() not in ("", "off") else None,
         )
