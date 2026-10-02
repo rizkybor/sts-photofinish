@@ -12,11 +12,12 @@ test("parseClock/formatClock bolak-balik format RaceTime2", () => {
   assert.throws(() => parseClock("10:42"));
 });
 
-test("waktu resmi 1/100: truncate vs round", () => {
-  const ns = parseClock("10:42:13.487");
-  assert.equal(officialClock(ns, "truncate"), "10:42:13.48");
-  assert.equal(officialClock(ns, "round"), "10:42:13.49");
-  assert.equal(officialClock(parseClock("23:59:59.999"), "round"), "00:00:00.00");
+test("waktu resmi dalam milidetik (HH:MM:SS.mmm): truncate vs round di bawah 1 ms", () => {
+  assert.equal(officialClock(parseClock("04:52:55.976"), "truncate"), "04:52:55.976");
+  const ns = parseClock("10:42:13.487") + 700_000n; // 13,4877 dtk
+  assert.equal(officialClock(ns, "truncate"), "10:42:13.487");
+  assert.equal(officialClock(ns, "round"), "10:42:13.488");
+  assert.equal(officialClock(parseClock("23:59:59.999") + 600_000n, "round"), "00:00:00.000");
 });
 
 test("diffDayNs memilih jalur terpendek melewati tengah malam", () => {

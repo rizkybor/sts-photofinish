@@ -659,6 +659,32 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     return { frames, finishLine: index.finishLine };
   }
 
+  /**
+   * Gambar bukti untuk panel "Hasil Photo Finish" di timing: slit-scan + tanda
+   * perahu lain di tangkapan yang sama + foto frame terdekat dengan haluan.
+   * URL bertanda tangan & berumur pendek — diminta ulang setiap kali dibuka.
+   */
+  async function resultImage(crossingId: string) {
+    const c = await col.crossings.findOne({ _id: oid(crossingId, "crossingId") });
+    if (!c) throw new HttpError(404, "Hasil tidak ditemukan (mungkin tangkapan sudah dihapus)");
+    const capture = await col.captures.findOne({ _id: c.captureId });
+    if (!capture) throw new HttpError(404, "Rekaman tidak ditemukan");
+    const marks = await col.crossings.find({ captureId: capture._id }).sort({ rank: 1 }).toArray();
+    const fr = capture.framesFile ? await captureFrames(capture._id.toHexString()) : { frames: [], finishLine: null };
+    const frames = fr.frames;
+    const frame = frames.reduce<{ url: string; column: number } | null>(
+      (best, f) => (!best || Math.abs(f.column - c.column) < Math.abs(best.column - c.column) ? f : best), null);
+    return {
+      url: signFileUrl(cfg.PF_FILE_URL_SECRET, capture.file),
+      width: capture.width, height: capture.height, fps: capture.fps,
+      column: c.column,
+      marks: marks.map((m) => ({ column: m.column, rank: m.rank, teamId: m.teamId, lane: m.lane, self: m._id.equals(c._id) })),
+      frameUrl: frame?.url ?? null,
+      /** Garis finish dalam koordinat foto frame (overlay garis imajiner di timing). */
+      finishLine: fr.finishLine ?? null,
+    };
+  }
+
   async function frameAtColumn(captureId: string, column: number) {
     const capture = await col.captures.findOne({ _id: oid(captureId, "captureId") });
     if (!capture) throw new HttpError(404, "Capture tidak ditemukan");
@@ -864,6 +890,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
       crewInBoat: body.crewInBoat, crewExpected: body.crewExpected, upright: body.upright, secondCrossing: body.secondCrossing,
       timeNs, timeSource, finishTime, officialTime,
       status: "confirmed" as const, revision: c.revision + 1, confirmedBy: p.sub, confirmedAt: new Date(),
+      reason: isCorrection ? body.reason!.trim() : null,
     };
     await col.crossings.updateOne({ _id: c._id }, { $set: update });
     await audit.append({
@@ -893,6 +920,12 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
         secondCrossing: c.secondCrossing,
       },
       revision: c.revision, verifiedBy: c.confirmedBy ?? "", verifiedAt: (c.confirmedAt ?? new Date()).toISOString(),
+      sessionLabel: s.label, sessionNote: s.note ?? null,
+      teamName: s.lanes.find((l) => l.teamId === c.teamId)?.teamName ?? null,
+      verifiedByName: c.confirmedBy && ObjectId.isValid(c.confirmedBy)
+        ? (await col.users.findOne({ _id: new ObjectId(c.confirmedBy) }, { projection: { name: 1 } }))?.name ?? null
+        : null,
+      reason: c.reason ?? null,
     };
     const ok = await bus.toTiming("photofinish:verified", signPayload(unsigned, cfg.PF_HMAC_SECRET));
     if (ok) await col.crossings.updateOne({ _id: c._id, revision: c.revision }, { $max: { deliveredRevision: c.revision } });
@@ -910,7 +943,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger,
     getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
     listEvents, createSession, setSessionNote, armSession, closeSession, deleteSession, sessionList, finishFeed, sessionDetail,
-    addCapture, captureFrames, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
+    addCapture, captureFrames, resultImage, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,
     /** Hentikan timer kelompok finish saat API dimatikan. */
     shutdown: () => {

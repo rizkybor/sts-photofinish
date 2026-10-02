@@ -45,9 +45,9 @@ test("peringatan: urutan bertentangan dengan gambar, selisih besar, sinyal berle
 test("seri dalam 1/100 ditandai, bukan diputuskan", () => {
   assert.deepEqual(
     findTies([
-      { crossingId: "A", officialTime: "10:00:00.12" },
-      { crossingId: "B", officialTime: "10:00:00.12" },
-      { crossingId: "C", officialTime: "10:00:00.13" },
+      { crossingId: "A", officialTime: "10:00:00.121" },
+      { crossingId: "B", officialTime: "10:00:00.128" }, // beda 7 ms, tetap seri dalam 1/100
+      { crossingId: "C", officialTime: "10:00:00.130" },
     ]),
     [["A", "B"]],
   );

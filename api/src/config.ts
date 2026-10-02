@@ -27,7 +27,8 @@ const Env = z.object({
   /** Batas percobaan login per IP per 5 menit (anti tebak password). */
   PF_LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),
   PF_DEVICE_TOKEN_TTL: z.string().default("30d"),
-  // Aturan FAJI: akurasi 1/100 detik. Cara pembulatan dikonfirmasi ke Chief Judge.
+  // Waktu resmi ditampilkan dalam milidetik (HH:MM:SS.mmm); sisa di bawah 1 ms
+  // dipotong (truncate) atau dibulatkan (round). Seri tetap dinilai dalam 1/100.
   PF_OFFICIAL_ROUNDING: z.enum(["truncate", "round"]).default("truncate"),
   // Kelompok finish: sinyal dengan jarak <= GROUP_GAP digabung; ekstraksi
   // dikirim ke agent setelah GROUP_QUIET tanpa sinyal baru.

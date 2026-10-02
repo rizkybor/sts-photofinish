@@ -42,7 +42,7 @@ Sumber: *Draft Peraturan Penyelenggaraan Kompetisi Arung Jeram Indonesia 2026 V4
 
 | Aturan | Konsekuensi desain |
 |---|---|
-| Akurasi waktu **1/100 detik** | Kamera 120–240 fps cukup (4–8 ms/frame). Internal simpan ns; tampilan resmi 1/100 (mode pembulatan bisa dikonfigurasi, default **truncate** — konfirmasi ke Chief Judge). |
+| Akurasi waktu **1/100 detik** | Kamera 120–240 fps cukup (4–8 ms/frame). Internal simpan ns; waktu resmi ditampilkan & dikirim dalam **milidetik** (`HH:MM:SS.mmm`, mis. `04:52:55.976`; sisa di bawah 1 ms default **truncate**). Seri tetap dinilai dalam 1/100. |
 | Waktu berhenti saat **bagian mana pun dari perahu** menyentuh garis finish | Yang ditandai adalah ujung haluan pertama yang menyentuh garis. |
 | Finish sah hanya jika perahu **tidak terbalik & seluruh awak di dalam** (+50 dtk; RX: **eliminasi**) | Form konfirmasi punya `crewInBoat`, `crewExpected`, `upright`. |
 | **Dilarang melintas finish > 1 kali** (DSQ) | Agent merekam beberapa detik setelah finish; flag `secondCrossing`. |

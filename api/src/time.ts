@@ -54,12 +54,15 @@ export function formatClock(ns: bigint, digits = 3): string {
   return `${base}.${frac}`;
 }
 
-/** Waktu resmi FAJI: akurasi 1/100 detik → "HH:MM:SS.cc". */
+/**
+ * Waktu resmi → "HH:MM:SS.mmm" (milidetik, mis. 04:52:55.976). Seri tetap
+ * dinilai dalam 1/100 sesuai aturan FAJI — lihat findTies().
+ */
 export function officialClock(ns: bigint, rounding: Rounding): string {
-  const unit = 10n * NS_PER_MS;
+  const unit = NS_PER_MS;
   const t = wrapDay(ns);
   const q = rounding === "round" ? (t + unit / 2n) / unit : t / unit;
-  return formatClock(q * unit, 2);
+  return formatClock(q * unit, 3);
 }
 
 export interface ClockOffsets {

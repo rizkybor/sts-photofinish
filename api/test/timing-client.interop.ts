@@ -129,10 +129,49 @@ test("klien timing (photofinishCore.js): antre offline, frame bare, terima & ver
   assert.equal(client.pending().length, 1);
   await until(async () => (await database.col.crossings.findOne({ _id: new ObjectId(crossing._id) }))!.deliveredRevision === 1);
 
-  // View menerapkan → pending hilang
+  // Riwayat untuk panel "Hasil Photo Finish": tercatat sebagai menunggu
+  let hist = client.history();
+  assert.equal(hist.length, 1);
+  assert.equal(hist[0].status, "menunggu");
+  assert.equal(hist[0].finishTime, imp!.deviceTime);
+  assert.match(hist[0].officialTime, /^\d{2}:\d{2}:\d{2}\.\d{3}$/, "waktu resmi dalam milidetik");
+  assert.equal(hist[0].sessionLabel, "H2H");
+  assert.equal(hist[0].verifiedByName, "juri");
+  client.noteResult(crossing._id, 1, "Tim tidak tampil di heat/babak yang sedang dibuka");
+  assert.equal(client.history()[0].note, "Tim tidak tampil di heat/babak yang sedang dibuka");
+
+  // View menerapkan → pending hilang, riwayat "diterapkan"
   client.markApplied(crossing._id, 1);
   assert.equal(client.pending().length, 0);
   assert.deepEqual(saved.pending, {});
+  assert.equal(client.history()[0].status, "diterapkan");
+  assert.ok(Array.isArray(saved.history), "riwayat tersimpan ke disk");
+
+  // Koreksi juri (dengan alasan) → revisi 2 tercatat, kiriman ulang tidak menggandakan
+  await http("POST", `/api/crossings/${crossing._id}/confirm`, juri, { teamId: "T-A", crewInBoat: 5, crewExpected: 6, upright: true, reason: "awak kurang satu" });
+  await until(() => received.length === 2);
+  hist = client.history();
+  assert.equal(hist.length, 2);
+  assert.equal(hist[0].revision, 2);
+  assert.equal(hist[0].reason, "awak kurang satu");
+  assert.equal(hist[0].penalties.crewIncomplete, true);
+  client.markApplied(crossing._id, 2, "dipertahankan");
+  assert.equal(client.history()[0].status, "dipertahankan");
+
+  // Gambar bukti untuk panel: URL absolut bertanda tangan, tanda perahu ini
+  const img = await client.resultImage(crossing._id);
+  assert.equal(img.ok, true, img.error);
+  assert.ok(img.url.startsWith(base + "/files/"), img.url);
+  assert.equal((await fetch(img.url)).status, 200);
+  assert.equal(img.column, 5);
+  assert.ok("finishLine" in img, "garis finish ikut dikirim (null bila rekaman tanpa foto frame)");
+  assert.deepEqual(img.marks.map((m: any) => [m.rank, m.self]), [[1, true]]);
+  assert.equal((await client.resultImage("0".repeat(24))).ok, false, "hasil tidak dikenal → ditolak");
+
+  // Hapus baris riwayat (lokal): data di Photo Finish tetap ada
+  assert.equal(client.deleteHistory(crossing._id, 1), 1);
+  assert.deepEqual(client.history().map((h: any) => h.revision), [2]);
+  assert.ok(await database.col.crossings.findOne({ _id: new ObjectId(crossing._id) }));
 
   // Sesi berikutnya dibuat admin di Photo Finish (cukup Event, tanpa format)
   const { data: next } = await http("POST", "/api/sessions", op, { eventId: "E1", note: "R4 Putra" });

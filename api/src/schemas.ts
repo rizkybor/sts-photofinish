@@ -70,6 +70,13 @@ export interface PhotofinishVerified {
   revision: number;
   verifiedBy: string;
   verifiedAt: string;
+  /** Untuk panel "Hasil Photo Finish" di timing (hanya ditampilkan). */
+  sessionLabel: string;
+  sessionNote: string | null;
+  teamName: string | null;
+  verifiedByName: string | null;
+  /** Alasan koreksi juri (revisi ≥ 2), null untuk konfirmasi pertama. */
+  reason: string | null;
   sig: string;
 }
 

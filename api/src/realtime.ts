@@ -105,6 +105,9 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
           return { impulseId: imp._id.toHexString() };
         }));
         socket.on("timing:clock", (raw: unknown, ack?: Ack) => handle(ack, () => service.updateClock(TimingClock.parse(raw))));
+        // Panel "Hasil Photo Finish": gambar bukti satu hasil (hanya baca).
+        socket.on("timing:result-image", (raw: unknown, ack?: Ack) => handle(ack, () =>
+          service.resultImage(String((raw as { crossingId?: unknown } | null)?.crossingId ?? ""))));
         service.redeliverPending().catch((err) => console.error("[redeliver]", err));
         return;
       }

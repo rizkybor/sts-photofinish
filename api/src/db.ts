@@ -158,6 +158,8 @@ export interface CrossingDoc {
   upright: boolean | null;
   secondCrossing: boolean;
   status: "suggested" | "confirmed" | "disputed";
+  /** Alasan koreksi terakhir dari juri (null untuk konfirmasi pertama). */
+  reason?: string | null;
   revision: number;
   markedBy: string;
   confirmedBy: string | null;

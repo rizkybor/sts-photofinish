@@ -90,7 +90,10 @@ export function findTies(officialTimes: Array<{ crossingId: string; officialTime
   const groups = new Map<string, string[]>();
   for (const { crossingId, officialTime } of officialTimes) {
     if (!officialTime) continue;
-    groups.set(officialTime, [...(groups.get(officialTime) ?? []), crossingId]);
+    // Waktu resmi tampil dalam milidetik, tetapi seri dinilai dalam 1/100:
+    // "HH:MM:SS.cc" (11 karakter pertama).
+    const hundredths = officialTime.slice(0, 11);
+    groups.set(hundredths, [...(groups.get(hundredths) ?? []), crossingId]);
   }
   return [...groups.values()].filter((ids) => ids.length > 1);
 }

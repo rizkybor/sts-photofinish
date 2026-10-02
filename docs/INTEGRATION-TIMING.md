@@ -46,7 +46,8 @@ payload waktu; lihat `microGateReader.js`). Akibatnya:
 | `src/mixins/serialPortMixin.js` | `onFinish`/`onLap` → sinyal; `onStart` berwaktu → heartbeat |
 | `src/mixins/photofinishMixin.js` | Menerapkan hasil ke view (cek Event + format lomba, konfirmasi bila menimpa) |
 | `src/components/photofinish/PhotofinishBadge.vue` | Status koneksi / antrean / hasil menunggu |
-| `src/components/photofinish/PhotofinishBadge.vue` | Badge **Photo Finish terhubung / terputus** di halaman race |
+| `src/components/photofinish/PhotofinishBadge.vue` | Badge **Photo Finish terhubung / terputus** di halaman race — klik untuk membuka panel hasil |
+| `src/components/photofinish/PhotofinishResults.vue` | Panel **Hasil Photo Finish** (hanya dilihat): riwayat kiriman hasil juri, status Menunggu/Diterapkan/Dipertahankan/Diganti + alasan, klik waktu untuk menyalin. Data: `<userData>/photofinish-history.json` (300 terakhir) |
 | `src/background.js` | Memanggil `setupPhotofinish()` |
 | `HeadToHead.vue`, `RaftingCross.vue`, `DownRiverRace.vue` | `pfCategory`, `pfBucket()` (hanya eventId), `pfLocateTeam()` + PhotofinishBadge |
 
