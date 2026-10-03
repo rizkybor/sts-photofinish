@@ -105,6 +105,12 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
           return { impulseId: imp._id.toHexString() };
         }));
         socket.on("timing:clock", (raw: unknown, ack?: Ack) => handle(ack, () => service.updateClock(TimingClock.parse(raw))));
+        // Sinkron jam (gaya NTP) — timing mengonversi kalibrasi Long Range ⇄ Photo Finish.
+        socket.on("clock:ping", (_: unknown, ack?: Ack) => ack?.({ ok: true, serverNs: service.serverNowNs().toString() }));
+        // Kalibrasi Long Range Start (dari timing) → diterapkan bila lebih baru.
+        socket.on("timing:calibration", (raw: unknown, ack?: Ack) => handle(ack, () => service.applyTimingCalibration(raw)));
+        // Kalibrasi Photo Finish terkini → timing (Long Range mengikuti bila lebih baru).
+        service.calibrationForTiming().then((msg) => socket.emit("pf:calibration", msg)).catch((err) => console.error("[calibration]", err));
         // Panel "Hasil Photo Finish": gambar bukti satu hasil (hanya baca).
         socket.on("timing:result-image", (raw: unknown, ack?: Ack) => handle(ack, () =>
           service.resultImage(String((raw as { crossingId?: unknown } | null)?.crossingId ?? ""))));

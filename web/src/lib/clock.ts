@@ -16,6 +16,7 @@ export interface ClockStatus {
   diffVsRaceTimeNs: string | null;
   updatedBy: string;
   updatedAt: string;
+  origin?: "photofinish" | "longrange";
 }
 
 const DAY_NS = 86_400_000_000_000n;

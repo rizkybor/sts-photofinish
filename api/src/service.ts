@@ -8,7 +8,7 @@ import { rm, unlink } from "node:fs/promises";
 import { fileSha256, readColumns, readFramesIndex, resolveCapturePath, signFileUrl } from "./files.js";
 import { findTies, pairByOrder } from "./pairing.js";
 import type { z } from "zod";
-import { AgentTrigger } from "./schemas.js";
+import { AgentTrigger, TimingCalibration } from "./schemas.js";
 import type { CalibrateBody, CameraConfig, CaptureCreate, ClockSettingsUpdate, CrossingConfirm, CrossingMark, PhotofinishVerified, SessionCreate, TimingClock, TimingImpulse } from "./schemas.js";
 import {
   deviceToAgentNs, diffDayNs, formatClock, frameToDeviceNs, NS_PER_MS, NS_PER_SEC, nowEpochNs, officialClock, parseClock, toNs, wrapDay,
@@ -160,6 +160,8 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
       diffVsRaceTimeNs: auto && eff.effectiveOffsetNs !== null ? (toNs(auto.deviceOffsetNs) - toNs(eff.effectiveOffsetNs)).toString() : null,
       updatedBy: settings.updatedBy,
       updatedAt: settings.updatedAt,
+      /** "longrange" = disinkronkan dari kalibrasi Long Range Start (lewat sts-timingsystem). */
+      origin: settings.origin ?? "photofinish",
     };
   }
 
@@ -198,8 +200,10 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
       }
     }
 
-    const doc: ClockSettingsDoc = { _id: "settings", ...next, revision: before.revision + 1, updatedBy: p.sub, updatedAt: new Date() };
+    const doc: ClockSettingsDoc = { _id: "settings", ...next, revision: before.revision + 1, updatedBy: p.sub, updatedAt: new Date(), origin: "photofinish" };
     await col.clockSettings.replaceOne({ _id: "settings" }, doc, { upsert: true });
+    // Sinkron ke Long Range Start lewat sts-timingsystem (penghubung kedua aplikasi).
+    bus.notifyTiming("pf:calibration", calibrationMessage(doc, `Photo Finish: ${body.action}`));
     await audit.append({
       userId: p.sub, action: `clock.${body.action}`, entity: "clock", entityId: "settings",
       before: { mode: before.mode, manualOffsetNs: before.manualOffsetNs, trimNs: before.trimNs, revision: before.revision },
@@ -208,6 +212,57 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     const status = await clockStatus();
     bus.toStaff("clock:updated", status);
     return status;
+  }
+
+  // ---------------------------------------------------------------- sinkron kalibrasi ↔ Long Range Start
+  // sts-timingsystem tersambung ke Photo Finish & Long Range Start, jadi ia
+  // menjadi penghubung: kalibrasi yang LEBIH BARU (updatedAt) menang. Tiap
+  // sisi menyimpan kalibrasinya sendiri, sehingga aplikasi yang sedang mati
+  // menyusul saat aktif lagi (timing menukar keduanya setiap tersambung).
+
+  function calibrationMessage(s: ClockSettingsDoc, note: string | null) {
+    return signPayload({
+      type: "pf:calibration",
+      mode: s.mode,
+      manualOffsetNs: s.manualOffsetNs,
+      trimNs: s.trimNs,
+      revision: s.revision,
+      updatedAt: s.updatedAt.toISOString(),
+      origin: s.origin ?? "photofinish",
+      note,
+    }, cfg.PF_HMAC_SECRET);
+  }
+
+  /** Dikirim ke timing saat tersambung — juga bila belum pernah dikalibrasi (revision 0, updatedAt epoch 0). */
+  async function calibrationForTiming() {
+    return calibrationMessage(await clockSettings(), null);
+  }
+
+  async function applyTimingCalibration(raw: unknown) {
+    if (!raw || typeof raw !== "object" || !verifyPayload(raw, cfg.PF_HMAC_SECRET)) throw new HttpError(401, "Tanda tangan HMAC tidak valid");
+    const msg = TimingCalibration.parse(raw);
+    const before = await clockSettings();
+    const incomingAt = new Date(msg.updatedAt);
+    if (incomingAt.getTime() <= before.updatedAt.getTime()) {
+      // Kalibrasi Photo Finish sama/lebih baru — timing yang akan mengikuti.
+      return { applied: false, status: await clockStatus() };
+    }
+    const doc: ClockSettingsDoc = {
+      _id: "settings", mode: msg.mode, manualOffsetNs: msg.mode === "manual" ? msg.manualOffsetNs : before.manualOffsetNs,
+      trimNs: msg.trimNs, revision: before.revision + 1, updatedBy: "device:timing", updatedAt: incomingAt, origin: "longrange",
+    };
+    if (doc.mode === "manual" && doc.manualOffsetNs === null) throw new HttpError(400, "Kalibrasi manual tanpa offset");
+    await col.clockSettings.replaceOne({ _id: "settings" }, doc, { upsert: true });
+    await audit.append({
+      userId: "device:timing", action: "clock.sync-from-longrange", entity: "clock", entityId: "settings",
+      before: { mode: before.mode, manualOffsetNs: before.manualOffsetNs, trimNs: before.trimNs, revision: before.revision },
+      after: { mode: doc.mode, manualOffsetNs: doc.manualOffsetNs, trimNs: doc.trimNs, revision: doc.revision },
+      reason: msg.note ?? "Disinkronkan dari kalibrasi Long Range Start",
+    });
+    const status = await clockStatus();
+    bus.toStaff("clock:updated", status);
+    bus.notifyTiming("pf:calibration", calibrationMessage(doc, msg.note ?? null));
+    return { applied: true, status };
   }
 
   // ---------------------------------------------------------------- pengaturan kamera
@@ -940,7 +995,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
   }
 
   return {
-    updateClock, clockStatus, updateClockSettings, ingestImpulse, ingestCameraTrigger,
+    updateClock, clockStatus, updateClockSettings, calibrationForTiming, applyTimingCalibration, ingestImpulse, ingestCameraTrigger,
     getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
     listEvents, createSession, setSessionNote, armSession, closeSession, deleteSession, sessionList, finishFeed, sessionDetail,
     addCapture, captureFrames, resultImage, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,

@@ -100,7 +100,18 @@ onUnmounted(() => {
         </div>
         <div><dt>Selisih vs RaceTime2</dt><dd><span class="status-pill" :class="diffCls">{{ fmtMs(diffMs, 3) }}</span></dd></div>
         <div><dt>Trim</dt><dd class="mono">{{ fmtMs(trimMs, 3) }}</dd></div>
+        <div v-if="s && s.revision > 0">
+          <dt>Kalibrasi terakhir</dt>
+          <dd>
+            {{ s.origin === "longrange" ? "Dari Long Range Start" : "Di Photo Finish" }}
+            · {{ new Date(s.updatedAt).toLocaleTimeString("id-ID") }}
+          </dd>
+        </div>
       </dl>
+      <p class="hint sync-note">
+        <AppIcon name="refresh" /> Tersinkron dengan <strong>Long Range Start</strong> (lewat sts-timingsystem):
+        kalibrasi terbaru di salah satu aplikasi berlaku untuk keduanya.
+      </p>
 
       <template v-if="can('admin')">
         <div class="section-label">Kalibrasi admin</div>
@@ -142,6 +153,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.sync-note { display: flex; gap: 6px; align-items: flex-start; margin: 0 0 12px; padding: 8px 10px; border-radius: 10px; background: var(--info-bg); color: #0369a1; }
 .clock { position: relative; }
 .clock-face { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.22); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); color: #fff; }
 .clock-face:hover { background: rgba(0, 0, 0, 0.3); }

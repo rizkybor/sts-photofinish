@@ -327,7 +327,7 @@ Langkah lengkap ada di **[PANDUAN-VPS.md](PANDUAN-VPS.md)**. Ringkasnya:
 | # | Siapa | Langkah |
 |---|---|---|
 | 1 | Teknisi | Server jalan (`npm run prod:status`), agent kamera **terhubung** |
-| 2 | Admin | **Jam navbar → Set ke waktu** sesuai layar RaceTime2, rapikan dengan **Trim** |
+| 2 | Admin | **Jam navbar → Set ke waktu** sesuai layar RaceTime2, rapikan dengan **Trim**. Kalibrasi ini **tersinkron dengan Long Range Start** (lewat sts-timingsystem): cukup kalibrasi di salah satu aplikasi |
 | 3 | Operator | **Standby Kamera**: tiang photocell berimpit dengan garis biru tegak lurus, indikator **hijau** |
 | 4 | Operator timing | Halaman lomba: badge **"Photo Finish terhubung"** → **Connect Racetime** |
 

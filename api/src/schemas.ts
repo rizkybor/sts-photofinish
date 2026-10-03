@@ -190,6 +190,24 @@ export const CrossingConfirm = z.object({
 });
 
 /** Kalibrasi jam Photo Finish oleh admin. */
+/**
+ * Kalibrasi jam dari sts-timingsystem (hasil kalibrasi Long Range Start,
+ * sudah dikonversi timing ke basis jam server API ini). Diterapkan bila
+ * lebih baru dari kalibrasi Photo Finish yang tersimpan. HMAC diverifikasi
+ * pada payload mentah sebelum parse.
+ */
+export const TimingCalibration = z.object({
+  type: z.literal("timing:calibration"),
+  mode: z.enum(["auto", "manual"]),
+  manualOffsetNs: z.string().regex(/^-?\d{1,25}$/).nullable(),
+  trimNs: z.string().regex(/^-?\d{1,15}$/),
+  /** Waktu kalibrasi di Long Range (ISO) — pembanding "mana yang lebih baru". */
+  updatedAt: z.string().datetime(),
+  note: z.string().max(200).nullable().optional(),
+  sig: z.string(),
+});
+export type TimingCalibration = z.infer<typeof TimingCalibration>;
+
 export const ClockSettingsUpdate = z.discriminatedUnion("action", [
   /** Ikuti heartbeat RaceTime2 secara otomatis. */
   z.object({ action: z.literal("use-auto"), reason: z.string().max(500).optional() }),

@@ -219,3 +219,103 @@ test("klien timing tersambung ulang sendiri setelah API ditutup lalu hidup lagi 
     await api2.close();
   }
 });
+
+test("kalibrasi jam sinkron Photo Finish ⇄ Long Range (lebih baru menang, menyusul saat tersambung)", { skip }, async () => {
+  const req = createRequire(CORE);
+  const pfCore = req(CORE);
+  const lrCore = req(path.join(TIMING_APP, "src/services/longrangeCore.js"));
+  const sync = req(path.join(TIMING_APP, "src/services/clockSyncCore.js"));
+  const clockSync = req(path.join(TIMING_APP, "src/services/clockSyncMain.js")); // penghubung asli
+  const timingIo = createRequire(path.join(TIMING_APP, "package.json"))("socket.io-client").io;
+  const DAY = 86_400_000;
+  const wrap = (ms: number) => ((ms % DAY) + DAY) % DAY;
+  const near = (a: number, b: number, tol: number, msg: string) => {
+    const d = Math.abs(((a - b + DAY / 2) % DAY + DAY) % DAY - DAY / 2);
+    assert.ok(d <= tol, `${msg}: selisih ${d.toFixed(3)} ms`);
+  };
+
+  // --- konversi murni bolak-balik (offset jam server PF ≠ laptop)
+  const L = Date.UTC(2026, 9, 3, 3, 15, 0, 250), P = 37.25;
+  const pfManual = { mode: "manual", manualOffsetNs: ((BigInt(L) + 37n) * 1_000_000n - 36_000_000_000_000n).toString(), trimNs: "1500000" };
+  const lrForm = sync.photofinishToLongrange(pfManual, L, P);
+  const rt2pf = wrap(L + P - Number(BigInt(pfManual.manualOffsetNs) / 1000n) / 1000);
+  const rt2lr = wrap(lrCore.localTodMs(L) - lrForm.manualOffsetMs);
+  near(rt2lr, rt2pf, 0.001, "PF → LR menghasilkan jam RaceTime2 yang sama");
+  assert.equal(lrForm.trimMs, 1.5);
+  const back = sync.longrangeToPhotofinish(lrForm, L, P);
+  assert.ok(Math.abs(Number(BigInt(back.manualOffsetNs) - BigInt(pfManual.manualOffsetNs))) <= 1000, "bolak-balik selisih ≤ 1 µs");
+  assert.equal(back.trimNs, "1500000");
+  assert.deepEqual(sync.longrangeToPhotofinish({ manualOffsetMs: null, trimMs: 0 }, L, P).mode, "auto");
+
+  // --- klien nyata: Photo Finish (socket ke API ini) + Long Range (tanpa server LRS)
+  const login = async (u: string) => (await http("POST", "/api/auth/login", undefined, { username: u, password: "rahasia-panjang" })).data.token as string;
+  const adm = await login("adm");
+  const lrStore: Record<string, unknown> = {};
+  const lr = lrCore.createLongrangeClient({
+    apiUrl: "http://127.0.0.1:9", timingToken: "x", hmacSecret: "x", io: timingIo, now: () => Date.now(),
+    storage: { load: (n: string) => lrStore[n] ?? null, save: (n: string, d: unknown) => { lrStore[n] = JSON.parse(JSON.stringify(d)); } },
+    onCalibrated: () => clockSync.notify(),
+  });
+  clockSync.attachLongrange(lr, () => Date.now());
+  const timingToken = issueToken({ sub: "device:timing:cal", name: "timing", role: "device", deviceKind: "timing" }, SECRET, "1h");
+  let pf: any = null;
+  const makePf = () => {
+    const c = pfCore.createPhotofinishClient({
+      apiUrl: base, deviceToken: timingToken, hmacSecret: SECRET, io: timingIo,
+      storage: { load: () => null, save: () => {} }, now: () => nowEpochNs().toString(), onCalibration: () => clockSync.notify(),
+    });
+    clockSync.attachPhotofinish(c);
+    return c;
+  };
+  const lrTod = () => { const st = lr.status(); return wrap(lrCore.localTodMs(Date.now()) - st.displayOffsetMs); };
+  const pfTod = async () => {
+    const s = (await http("GET", "/api/clock/status", adm)).data;
+    return wrap(Number((BigInt(s.serverNs) - BigInt(s.effectiveOffsetNs)) / 1000n) / 1000);
+  };
+
+  // 1) Admin kalibrasi di Photo Finish → Long Range mengikuti
+  pf = makePf();
+  pf.start();
+  await until(() => pf.pfClock().synced && !!pf.remoteCalibration(), 10_000);
+  await http("POST", "/api/clock/settings", adm, { action: "set-time", deviceTime: "10:00:00.000" });
+  await http("POST", "/api/clock/settings", adm, { action: "trim", deltaMs: 12.5 });
+  await until(() => lr.calibrationState().origin === "photofinish" && lr.calibrationState().trimMs === 12.5, 5_000);
+  near(lrTod(), await pfTod(), 5, "jam Long Range = jam Photo Finish setelah kalibrasi PF");
+
+  // 2) Operator kalibrasi Long Range → Photo Finish mengikuti
+  await new Promise((r) => setTimeout(r, 20));
+  lr.calibrate({ action: "set-time", deviceTime: "11:30:00.000", hostMs: Date.now() });
+  await until(async () => (await http("GET", "/api/clock/status", adm)).data.source === "manual" &&
+    (await database.col.clockSettings.findOne({ _id: "settings" }))?.origin === "longrange", 5_000);
+  near(await pfTod(), lrTod(), 5, "jam Photo Finish = jam Long Range setelah kalibrasi LR");
+  const audit = await database.col.audit.findOne({ action: "clock.sync-from-longrange" });
+  assert.ok(audit, "sinkron dari Long Range tercatat di audit log");
+
+  // 3) Timing terputus → admin kalibrasi PF → timing tersambung lagi → Long Range menyusul
+  pf.stop();
+  await new Promise((r) => setTimeout(r, 20));
+  await http("POST", "/api/clock/settings", adm, { action: "set-time", deviceTime: "14:00:00.000" });
+  const before = lr.calibrationState().updatedAt;
+  pf = makePf();
+  pf.start();
+  await until(() => lr.calibrationState().updatedAt !== before && lr.calibrationState().origin === "photofinish", 10_000);
+  near(lrTod(), await pfTod(), 5, "Long Range menyusul kalibrasi PF yang dibuat saat terputus");
+
+  // 4) Photo Finish terputus → operator kalibrasi LR → tersambung lagi → Photo Finish menyusul
+  pf.stop();
+  await new Promise((r) => setTimeout(r, 20));
+  lr.calibrate({ action: "set-time", deviceTime: "15:45:00.000", hostMs: Date.now() });
+  pf = makePf();
+  pf.start();
+  await until(async () => (await database.col.clockSettings.findOne({ _id: "settings" }))?.updatedAt.toISOString() === lr.calibrationState().updatedAt, 10_000);
+  near(await pfTod(), lrTod(), 5, "Photo Finish menyusul kalibrasi LR yang dibuat saat terputus");
+
+  // 5) Stabil: pertukaran berikutnya tidak mengubah apa pun (tidak memantul)
+  const rev = (await database.col.clockSettings.findOne({ _id: "settings" }))!.revision;
+  const lrRev = lr.calibrationState().revision;
+  await clockSync.notify();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await database.col.clockSettings.findOne({ _id: "settings" }))!.revision, rev);
+  assert.equal(lr.calibrationState().revision, lrRev);
+  pf.stop();
+});

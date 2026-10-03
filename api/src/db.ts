@@ -108,6 +108,11 @@ export interface ClockSettingsDoc {
   revision: number;
   updatedBy: string;
   updatedAt: Date;
+  /**
+   * Asal kalibrasi terakhir: "photofinish" (admin di web ini) atau "longrange"
+   * (kalibrasi Long Range Start di sts-timingsystem, disinkronkan otomatis).
+   */
+  origin?: "photofinish" | "longrange";
 }
 
 export interface CaptureDoc {
