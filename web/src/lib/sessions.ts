@@ -113,7 +113,7 @@ export const fmtTime = (d: string) => new Date(d).toLocaleTimeString("id-ID", { 
 export const fmtGap = (ms: number | null) => (ms === null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2).replace(".", ",")} dtk`);
 
 /**
- * Hapus sesi (aktif maupun tidak aktif) setelah konfirmasi. Ditolak API bila
+ * Hapus sesi (terbuka maupun ditutup) setelah konfirmasi. Ditolak API bila
  * ada hasil yang sudah dikonfirmasi juri. Mengembalikan true bila terhapus.
  */
 export async function deleteSessionWithConfirm(s: { _id: string; label: string; armed: boolean }): Promise<boolean> {

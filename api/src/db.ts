@@ -84,6 +84,8 @@ export interface GroupDoc {
   extractRequestedAt: Date | null;
   /** Snapshot jam PF saat ekstraksi — dicetak di gambar, tidak berubah oleh kalibrasi ulang. */
   clock: ClockSnapshot | null;
+  /** Agent gagal membuat rekaman (mis. kamera mati saat finish) — alasan untuk operator. */
+  captureError?: string | null;
 }
 
 export interface ClockSnapshot {

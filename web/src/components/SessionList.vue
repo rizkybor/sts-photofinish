@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { can } from "../lib/api";
 import { category } from "../lib/labels";
-import { armedSession, deleteSessionWithConfirm, loadSessions, sessions } from "../lib/sessions";
+import { armedSession, deleteSessionWithConfirm, sessions } from "../lib/sessions";
 import type { SessionSummary } from "../lib/types";
 import AppIcon from "./ui/AppIcon.vue";
 
@@ -42,7 +42,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
   </div>
 
   <div class="stat-strip">
-    <div class="stat-card" :class="stats.armed ? 'stat-card--danger' : 'stat-card--neutral'">
+    <div class="stat-card" :class="stats.armed ? 'stat-card--success' : 'stat-card--neutral'">
       <span class="stat-card__icon"><AppIcon name="sensors" /></span>
       <div style="min-width: 0">
         <div class="stat-card__value" style="font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ stats.armed?.label ?? "Tidak ada" }}</div>
@@ -65,7 +65,6 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
         <button class="btn btn-sm" :class="{ 'is-active': filter === 'closed' }" @click="filter = 'closed'">Ditutup</button>
         <button class="btn btn-sm" :class="{ 'is-active': filter === 'all' }" @click="filter = 'all'">Semua</button>
       </div>
-      <button class="btn btn-sm btn-ghost" title="Muat ulang" @click="loadSessions"><AppIcon name="refresh" /></button>
     </div>
 
     <div class="table-wrap" style="border: 0; border-top: 1px solid var(--border); border-radius: 0">
@@ -80,7 +79,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
               <div class="hint mono">{{ s.eventId }}</div>
             </td>
             <td>
-              <span v-if="s.armed" class="status-pill status-live"><span class="dot" />AKTIF</span>
+              <span v-if="s.armed" class="status-pill status-success"><span class="dot" />Aktif</span>
               <span v-else-if="s.status === 'open'" class="status-pill status-neutral"><span class="dot" />Terbuka</span>
               <span v-else class="status-pill status-muted"><span class="dot" />Ditutup</span>
             </td>
@@ -93,7 +92,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
             <td class="tnum">{{ fmtDate(s.createdAt) }}</td>
             <td class="row-actions">
               <button
-                v-if="can('operator') && s.status === 'open'" class="btn btn-sm btn-ghost del" :title="`Hapus ${s.label}`"
+                v-if="can('operator')" class="btn btn-sm btn-ghost del" :title="`Hapus ${s.label}`"
                 @click.stop="deleteSessionWithConfirm(s)"
               ><AppIcon name="del" /></button>
               <AppIcon name="chevron" size="20" />
@@ -115,7 +114,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleString("id-ID", { day: "2-dig
 <style scoped>
 .chip-warn { background: var(--warn-bg); color: var(--warn-ink); }
 .chip-ok { background: var(--ok-bg); color: var(--ok-ink); }
-.row-live td { background: var(--bad-bg); }
+.row-live td { background: var(--brand-soft); }
 .row-actions { text-align: right; color: var(--faint); white-space: nowrap; }
 .row-actions .del { color: var(--bad-ink); opacity: 0; transition: opacity 0.15s; }
 tr:hover .row-actions .del, .row-actions .del:focus-visible { opacity: 1; }

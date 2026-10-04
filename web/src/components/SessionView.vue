@@ -8,6 +8,7 @@ import type { Crossing, Group, SessionDetail } from "../lib/types";
 import { attempt, confirmDialog, toast } from "../lib/ui";
 import CrossingConfirmModal from "./CrossingConfirmModal.vue";
 import GroupCard from "./GroupCard.vue";
+import RecIndicator from "./RecIndicator.vue";
 import AppIcon from "./ui/AppIcon.vue";
 
 const props = defineProps<{ sessionId: string; focusGroup?: string | null; cameFrom?: string }>();
@@ -148,14 +149,10 @@ onUnmounted(() => {
           <span v-if="session.heatId" class="chip">{{ category(session.raceCategory).unit }} {{ session.heatId }}</span>
           <span class="chip" :title="`Id Event ${session.eventId}`">{{ session.eventName ?? `Event ${session.eventId}` }}</span>
           <span class="chip"><AppIcon name="camera" /> {{ session.cameraId }}</span>
-          <span v-if="session.armed" class="status-pill status-live"><span class="dot" />AKTIF — menerima sinyal</span>
+          <span v-if="session.armed" class="status-pill status-success"><span class="dot" />Aktif — menerima sinyal</span>
           <span v-else-if="session.status === 'open'" class="status-pill status-neutral"><span class="dot" />Terbuka</span>
           <span v-else class="status-pill status-muted"><span class="dot" />Ditutup</span>
         </div>
-      </div>
-      <div class="row">
-        <button v-if="cameFrom === 'standby'" class="btn btn-primary" @click="emit('back')"><AppIcon name="arrowBack" /> Kembali ke Standby <kbd>S</kbd></button>
-        <button v-if="can('operator')" class="btn" title="Sesi baru untuk Event yang sama & langsung aktifkan (N)" @click="emit('next')"><AppIcon name="skipNext" /> Sesi berikutnya</button>
       </div>
       <div v-if="can('operator') && session.status === 'open'" class="row">
         <button v-if="!session.armed" class="btn btn-success" @click="setArmed(true)"><AppIcon name="play" /> Aktifkan</button>
@@ -163,7 +160,12 @@ onUnmounted(() => {
         <button class="btn btn-danger" @click="closeSession"><AppIcon name="lock" /> Tutup sesi</button>
         <button class="btn btn-ghost btn-danger-text" title="Hapus sesi beserta tangkapannya" @click="removeSession"><AppIcon name="del" /> Hapus</button>
       </div>
+      <div v-else-if="can('operator')" class="row">
+        <button class="btn btn-ghost btn-danger-text" title="Hapus sesi yang sudah ditutup beserta tangkapannya" @click="removeSession"><AppIcon name="del" /> Hapus</button>
+      </div>
     </div>
+
+    <RecIndicator v-if="session.armed" variant="banner" :camera-id="session.cameraId" />
 
     <div v-if="focusDone && cameFrom === 'standby'" class="alert alert-success switch-banner">
       <AppIcon name="check" />

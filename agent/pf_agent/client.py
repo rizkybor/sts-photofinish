@@ -32,6 +32,10 @@ WAIT_FOR_FRAMES_S = 10.0
 REJECT_GRACE_S = 1.0
 
 
+
+class NoFramesError(RuntimeError):
+    """Tidak ada frame kamera di jendela finish."""
+
 class AgentClient:
     def __init__(self, cfg: AgentConfig, pipeline: Pipeline | None = None, env_settings: CameraSettings | None = None) -> None:
         self.cfg = cfg
@@ -174,7 +178,7 @@ class AgentClient:
         """Pindai kamera yang terpasang (kamera yang sedang dipakai tidak dibuka ulang)."""
         pipe = self.pipeline
         in_use = pipe.settings.source if pipe and pipe.settings.source.isdigit() else None
-        result = scan_cameras(in_use, pipe.size if pipe else None)
+        result = scan_cameras(in_use, pipe.size if pipe else None, in_use_frame=pipe.latest.get()[1] if pipe else None)
         return {"ok": True, **result}
 
     # ------------------------------------------------------------ cuplikan standby
@@ -235,6 +239,9 @@ class AgentClient:
             if oldest is not None and oldest > from_ns:
                 log.warning("Buffer tidak mencakup awal jendela (kurang %.0f ms) — naikkan PF_BUFFER_SECONDS", (oldest - from_ns) / 1e6)
 
+            if len(ring.window(from_ns, to_ns)[0]) == 0:
+                raise NoFramesError("Kamera tidak mengirim gambar saat finish ini (mati, baterai habis, atau terputus) — tidak ada rekaman.")
+
             frames = None
             if archive is not None:
                 archive.flush()
@@ -246,8 +253,20 @@ class AgentClient:
             )
             self._post_capture(req["groupId"], result, best.offset_ns, best.rtt_ns)
             log.info("Capture %s terkirim (%d kolom, %.0f fps, %d frame utuh)", req["groupId"], result.width, result.fps, result.frame_count)
-        except Exception:  # noqa: BLE001
+        except NoFramesError as err:
+            log.error("Kelompok %s: %s", req.get("groupId"), err)
+            self._report_extract_failed(req, str(err))
+        except Exception as err:  # noqa: BLE001
             log.exception("Ekstraksi kelompok %s gagal", req.get("groupId"))
+            self._report_extract_failed(req, f"Rekaman gagal dibuat di agent: {err}")
+
+    def _report_extract_failed(self, req: dict, message: str) -> None:
+        """Beri tahu API agar operator melihat alasannya di kartu finish, bukan hanya di log agent."""
+        try:
+            if self.sio.connected:
+                self.sio.emit("agent:extract-failed", {"groupId": str(req.get("groupId")), "error": message[:300]})
+        except Exception as err:  # noqa: BLE001
+            log.debug("laporan gagal ekstraksi tidak terkirim: %s", err)
 
     def _upload(self, r: ExtractResult) -> None:
         """Mode VPS: unggah semua file rekaman ke API sebelum didaftarkan.

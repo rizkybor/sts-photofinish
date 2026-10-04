@@ -193,6 +193,16 @@ class ObjectFilter:
         hits = [d for d in dets if d.label.lower() in wanted and d.x1 - m <= line_x <= d.x2 + m]
         return max(hits, key=lambda d: d.conf, default=None)
 
+    def reason(self, dets: list[Detection], line_x: float, width: int) -> str:
+        """Kenapa pemicu diabaikan — untuk operator, bukan hanya log."""
+        if not dets:
+            return "Tidak ada objek dikenali di gambar (riak, bayangan, atau objek terlalu kecil/gelap)."
+        wanted = {c.lower() for c in self.cfg.classes}
+        if any(d.label.lower() in wanted for d in dets):
+            return "Objek yang dipilih terlihat, tetapi tidak menyentuh garis finish."
+        others = ", ".join(sorted({f"{d.label} {d.conf:.2f}" for d in dets}))
+        return f"Bukan jenis objek yang dipilih — terlihat: {others}."
+
     def _ensure_detector(self) -> bool:
         if self.detector is not None:
             return True
@@ -252,7 +262,9 @@ class ObjectFilter:
                 self.stats.rejected += 1
                 self.stats.last_rejected = seen
                 log.info("Filter objek: pemicu diabaikan — terlihat: %s", seen)
-            self.stats.recent = ([{"at": job.ts, "ok": hit is not None, "seen": self.stats.last_label if hit else seen}] + self.stats.recent)[:10]
+            reason = None if hit else self.reason(dets, job.line_x, job.frame.shape[1])
+            entry = {"at": job.ts, "ok": hit is not None, "seen": self.stats.last_label if hit else seen, "reason": reason}
+            self.stats.recent = ([entry] + self.stats.recent)[:20]
 
     def status(self) -> dict:
         s = self.stats

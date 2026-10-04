@@ -17,7 +17,6 @@ const lane = ref("");
 const teamId = ref("");
 const zoom = ref<number | null>(null); // null = pas selebar panel
 const scale = ref(1);
-const smooth = ref(true);
 const focusColumn = ref<number | null>(null); // kolom yang fotonya ditampilkan
 const pfTimes = ref<string[] | null>(null);
 const frameViewer = ref<InstanceType<typeof FrameViewer> | null>(null);
@@ -32,7 +31,8 @@ const rtImpulses = computed(() => props.impulses.filter((i) => i.source !== "cam
 const nextRank = computed(() => props.crossings.reduce((m, c) => Math.max(m, c.rank), 0) + 1);
 const usedLanes = computed(() => new Set(props.crossings.map((c) => c.lane)));
 const editable = computed(() => props.session.status === "open" && can("operator"));
-const st = computed(() => GROUP_STATUS[props.group.status]);
+const st = computed(() =>
+  props.group.status === "extracting" && props.group.captureError ? { label: "Tidak terekam", cls: "status-danger" } : GROUP_STATUS[props.group.status]);
 
 async function onMark(column: number) {
   if (!props.capture) return;
@@ -147,9 +147,6 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
         </template>
         <span class="spacer" />
         <span class="readout">{{ hover ? `kolom ${hover.column} · ${hover.label}` : `${capture.fps} fps · ${(1000 / capture.fps).toFixed(1)} ms/kolom` }}</span>
-        <button class="btn btn-sm" :class="{ 'is-active': smooth }" :title="smooth ? 'Tampilan halus — klik untuk piksel tajam per kolom' : 'Piksel tajam — klik untuk tampilan halus'" @click="smooth = !smooth">
-          {{ smooth ? "Halus" : "Piksel" }}
-        </button>
         <button class="btn btn-sm" :class="{ 'is-active': zoom === null }" title="Pas selebar panel" @click="zoom = null">Pas</button>
         <label class="row" style="gap: 6px">
           <AppIcon name="zoom" />
@@ -159,7 +156,7 @@ const fmt = (d: string) => new Date(d).toLocaleTimeString("id-ID", { hour: "2-di
       </div>
       <div class="review" @mouseenter="frameViewer?.setActive(true)" @mouseleave="frameViewer?.setActive(false)">
         <SlitScanViewer
-          :capture="capture" :crossings="crossings" :impulses="impulses" :can-mark="editable" :zoom="zoom" :smooth="smooth"
+          :capture="capture" :crossings="crossings" :impulses="impulses" :can-mark="editable" :zoom="zoom"
           :focus-column="capture.frameCount ? focusColumn : null"
           :mark-color="mode === 'calibrate' ? '#fbbf24' : undefined" @mark="onMark" @hover="onHover" @scale="scale = $event" @times="pfTimes = $event"
         />

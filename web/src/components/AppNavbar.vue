@@ -2,6 +2,7 @@
 import { auth, can } from "../lib/api";
 import { realtime } from "../lib/socket";
 import ClockPanel from "./ClockPanel.vue";
+import RecIndicator from "./RecIndicator.vue";
 import AppIcon from "./ui/AppIcon.vue";
 import logo from "../assets/logo-sts-white.png";
 
@@ -36,6 +37,7 @@ const ROLE_LABEL = { admin: "Admin", judge: "Juri", operator: "Operator", viewer
       </nav>
 
       <div v-if="auth.user" class="nav-right">
+        <RecIndicator />
         <span class="conn" :class="realtime.connected ? 'on' : 'off'" :title="realtime.connected ? 'Realtime terhubung' : 'Realtime terputus — mencoba lagi'">
           <AppIcon :name="realtime.connected ? 'wifi' : 'wifiOff'" />
         </span>

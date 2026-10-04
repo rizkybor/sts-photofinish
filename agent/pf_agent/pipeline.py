@@ -22,10 +22,14 @@ from .objfilter import ObjectFilter, detector_available, list_models
 from .ringbuffer import LineRing
 from .settings import CameraSettings
 from .trigger import LineTrigger
+from .battery import host_battery
 
 log = logging.getLogger(__name__)
 
 RETRY_S = 3.0
+# Tanpa frame selama ini (iPhone mati/baterai habis, kabel lepas, driver macet)
+# → kamera dibuka ulang dari luar thread pembaca (grab() bisa macet selamanya).
+STALL_S = 6.0
 
 
 class LatestFrame:
@@ -88,9 +92,24 @@ class Pipeline:
                 self.last_error = str(err)
                 return False
 
+    def frame_age_ms(self) -> int | None:
+        ts = self.latest.get()[0]
+        return (now_ns() - ts) // 1_000_000 if ts else None
+
     def _watch(self) -> None:
         while not self._closed.wait(RETRY_S):
             if self.camera is None:
+                self._try_start()
+                continue
+            age = self.frame_age_ms()
+            if age is not None and age > STALL_S * 1000:
+                with self._lock:
+                    if self.camera is None or self._closed.is_set():
+                        continue
+                    self.last_error = f"Kamera {self.settings.source} berhenti mengirim gambar ({age / 1000:.0f} dtk) — mati, baterai habis, atau terputus. Membuka ulang…"
+                    log.error(self.last_error)
+                    self.stop()
+                    self.latest.set(0, None)  # jangan anggap frame lama masih segar
                 self._try_start()
 
     def close(self) -> None:
@@ -197,9 +216,11 @@ class Pipeline:
             "running": self.camera is not None,
             "retrying": self.camera is None and not self._closed.is_set(),
             "width": w, "height": h,
-            "measuredFps": round(getattr(self.camera, "measured_fps", 0.0), 1) if self.camera else 0.0,
+            # fps terukur hanya diperbarui saat ada frame — gambar macet = 0, bukan angka lama.
+            "measuredFps": round(getattr(self.camera, "measured_fps", 0.0), 1) if self.camera and (age := self.frame_age_ms()) is not None and age < 2000 else 0.0,
             # ms sejak frame terakhir — besar berarti kamera tidak mengirim gambar
-            "lastFrameAgeMs": (now_ns() - self.latest.get()[0]) // 1_000_000 if self.latest.get()[0] else None,
+            "lastFrameAgeMs": self.frame_age_ms(),
+            "hostBattery": host_battery(),
             "finishLine": None if fl is None else {"x1": fl.x1, "y1": fl.y1, "x2": fl.x2, "y2": fl.y2},
             "lastError": self.last_error,
             "notice": self.notice,

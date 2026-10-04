@@ -125,6 +125,11 @@ export const CaptureCreate = z.object({
 });
 
 /** Photocell virtual: agent melihat benda menyentuh garis finish di gambar kamera. */
+export const AgentExtractFailed = z.object({
+  groupId: z.string().regex(/^[0-9a-f]{24}$/),
+  error: z.string().min(1).max(300),
+});
+
 export const AgentTrigger = z.object({
   cameraId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   bootId: z.string().uuid(),
