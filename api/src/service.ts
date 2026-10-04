@@ -463,9 +463,19 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     };
     const sent = bus.toAgents("agent:extract", req);
     const warnings = sent ? [] : ["Capture Agent tidak terhubung — rekaman belum diambil."];
-    await col.groups.updateOne({ _id: groupId }, { $set: { status: "extracting", extractRequestedAt: new Date(), warnings, clock } });
+    await col.groups.updateOne({ _id: groupId }, { $set: { status: "extracting", extractRequestedAt: new Date(), warnings, clock, captureError: null } });
     bus.toSession(req.sessionId, "group:updated", { groupId: req.groupId, status: "extracting", warnings });
     bus.toStaff("sessions:changed", { sessionId: req.sessionId });
+  }
+
+  /** Agent tidak bisa membuat rekaman kelompok ini — tampilkan alasannya di kartu finish. */
+  async function markCaptureFailed(groupId: string, error: string) {
+    const _id = oid(groupId, "groupId");
+    const group = await col.groups.findOne({ _id });
+    if (!group || group.status !== "extracting" || (await col.captures.findOne({ groupId: _id }))) return;
+    await col.groups.updateOne({ _id }, { $set: { captureError: error, warnings: [error] } });
+    bus.toSession(group.sessionId.toHexString(), "group:updated", { groupId, status: group.status, warnings: [error] });
+    bus.toStaff("sessions:changed", { sessionId: group.sessionId.toHexString() });
   }
 
   /** Dipanggil saat startup & saat agent terhubung: kelompok yang tertunda diekstrak. */
@@ -525,17 +535,18 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
   }
 
   /**
-   * Hapus sesi yang masih terbuka (aktif maupun tidak aktif) — mis. sesi uji
-   * atau salah pilih Event. Aturannya sama dengan hapus tangkapan: ditolak
+   * Hapus sesi, terbuka maupun sudah ditutup — mis. sesi uji atau salah pilih
+   * Event. Aturannya sama dengan hapus tangkapan: ditolak
    * bila ada hasil yang sudah dikonfirmasi juri (barang bukti); sinyal
    * RaceTime2 tidak hilang, dikembalikan ke daftar "tanpa sesi".
    */
   async function deleteSession(p: Principal, id: string) {
-    const s = await getOpenSession(id);
+    const s = await col.sessions.findOne({ _id: oid(id, "sessionId") });
+    if (!s) throw new HttpError(404, "Sesi tidak ditemukan");
     if (await col.crossings.countDocuments({ sessionId: s._id, revision: { $gt: 0 } })) {
-      throw new HttpError(409, "Sesi punya hasil yang sudah dikonfirmasi juri — tidak bisa dihapus (barang bukti). Tutup sesi saja.");
+      throw new HttpError(409, "Sesi punya hasil yang sudah dikonfirmasi juri — tidak bisa dihapus (barang bukti).");
     }
-    for (const g of await col.groups.find({ sessionId: s._id }).toArray()) await deleteGroup(p, g._id.toHexString());
+    for (const g of await col.groups.find({ sessionId: s._id }).toArray()) await removeGroup(p, g);
     // Sinyal yang belum masuk kelompok finish (jarang) ikut dikembalikan.
     const loose = await col.impulses.updateMany({ sessionId: s._id }, { $set: { sessionId: null, groupId: null } });
     await col.sessions.deleteOne({ _id: s._id });
@@ -683,7 +694,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     const { groupId: _g, ...rest } = body;
     const doc: CaptureDoc = { _id: new ObjectId(), sessionId: group.sessionId, groupId: group._id, ...rest, clock: group.clock, createdAt: new Date() };
     await col.captures.insertOne(doc);
-    await col.groups.updateOne({ _id: group._id }, { $set: { status: "ready", warnings: [] } });
+    await col.groups.updateOne({ _id: group._id }, { $set: { status: "ready", warnings: [], captureError: null } });
     await audit.append({ userId: p.sub, action: "capture.create", entity: "capture", entityId: doc._id.toHexString(), before: null, after: { file: doc.file, sha256: doc.sha256, columnsSha256: doc.columnsSha256, clock: doc.clock }, reason: null });
     bus.toSession(group.sessionId.toHexString(), "capture:ready", serializeCapture(doc));
     changed(group.sessionId);
@@ -798,7 +809,12 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
     const group = await col.groups.findOne({ _id: oid(id, "groupId") });
     if (!group) throw new HttpError(404, "Kelompok finish tidak ditemukan");
     await getOpenSession(group.sessionId.toHexString());
+    return removeGroup(p, group);
+  }
 
+  /** Inti hapus kelompok finish — pemanggil wajib sudah memeriksa status sesi. */
+  async function removeGroup(p: Principal, group: GroupDoc) {
+    const id = group._id.toHexString();
     const crossings = await col.crossings.find({ groupId: group._id }).toArray();
     if (crossings.some((c) => c.revision > 0)) {
       throw new HttpError(409, "Ada hasil yang sudah dikonfirmasi juri di tangkapan ini — tidak bisa dihapus (barang bukti)");
@@ -996,7 +1012,7 @@ export function createService(cfg: Config, { col, client }: Database, audit: Aud
 
   return {
     updateClock, clockStatus, updateClockSettings, calibrationForTiming, applyTimingCalibration, ingestImpulse, ingestCameraTrigger,
-    getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction,
+    getCameraConfig, listCameraConfigs, saveCameraConfig, deleteCameraConfig, assignImpulse, resumePending, requestExtraction, markCaptureFailed,
     listEvents, createSession, setSessionNote, armSession, closeSession, deleteSession, sessionList, finishFeed, sessionDetail,
     addCapture, captureFrames, resultImage, calibrate, markCrossing, deleteCrossing, deleteGroup, confirmCrossing, redeliverPending,
     serverNowNs: nowEpochNs,

@@ -111,3 +111,12 @@ def test_yolo_sungguhan_mengenali_objek_di_gambar_contoh():
     f.detector = det
     hit = f.match(det.detect(img, 0.35, 640), img.shape[1] / 2, img.shape[1])
     assert hit is not None and hit.label == "bus"
+
+
+def test_alasan_pemicu_diabaikan_mudah_dibaca():
+    f = ObjectFilter(ObjectFilterConfig(classes=("boat",), recheck_s=0), lambda: (0, None))
+    assert "Tidak ada objek" in f.reason([], 50, 100)
+    jauh = Detection("boat", 0.9, 0, 0, 10, 10)
+    assert "tidak menyentuh garis finish" in f.reason([jauh], 50, 100)
+    bangku = Detection("bench", 0.6, 40, 0, 60, 10)
+    assert f.reason([bangku], 50, 100) == "Bukan jenis objek yang dipilih — terlihat: bench 0.60."

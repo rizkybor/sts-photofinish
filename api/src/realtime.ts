@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import { allows, type Principal, verifyToken } from "./auth.js";
 import type { Config } from "./config.js";
-import { AgentTrigger, TimingClock, TimingImpulse } from "./schemas.js";
+import { AgentExtractFailed, AgentTrigger, TimingClock, TimingImpulse } from "./schemas.js";
 import type { Bus, Service } from "./service.js";
 
 const ACK_TIMEOUT_MS = 5000;
@@ -156,6 +156,10 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
         // Ping-pong sinkron jam agent (gaya NTP, agent memilih RTT terkecil).
         socket.on("clock:ping", (_: unknown, ack?: Ack) => ack?.({ ok: true, serverNs: service.serverNowNs().toString() }));
         socket.on("agent:trigger", (raw: unknown, ack?: Ack) => handle(ack, () => service.ingestCameraTrigger(p, AgentTrigger.parse(raw))));
+        socket.on("agent:extract-failed", (raw: unknown) => {
+          const parsed = AgentExtractFailed.safeParse(raw);
+          if (parsed.success) service.markCaptureFailed(parsed.data.groupId, parsed.data.error).catch((err) => console.error("[extract-failed]", err));
+        });
         socket.on("agent:preview-frame", (frame: unknown) => {
           const f = frame as { cameraId?: unknown; jpeg?: unknown };
           if (typeof f?.cameraId !== "string" || !CAMERA_ID.test(f.cameraId)) return;
@@ -171,6 +175,9 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
       if (p.role === "device") return void socket.disconnect(true);
 
       socket.join("staff");
+      // Status kamera terakhir langsung dikirim — indikator REC di web tidak
+      // perlu menunggu laporan agent berikutnya.
+      for (const status of cameraStatus.values()) socket.emit("camera:status", status);
 
       // Standby kamera: hanya operator ke atas (rekaman atlet = data pribadi).
       socket.on("preview:subscribe", (cameraId: unknown, ack?: Ack) => {

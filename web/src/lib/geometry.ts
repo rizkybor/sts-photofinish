@@ -27,3 +27,9 @@ export function tiltLevel(deg: number): Level {
 export function midX(l: Line): number {
   return (l.x1 + l.x2) / 2;
 }
+
+/** x garis pada ketinggian y (garis tidak boleh mendatar). */
+export function xAtY(l: Line, y: number): number {
+  if (l.y2 === l.y1) return (l.x1 + l.x2) / 2;
+  return l.x1 + ((l.x2 - l.x1) * (y - l.y1)) / (l.y2 - l.y1);
+}

@@ -25,7 +25,7 @@ export type SessionSummary = Session & { progress: SessionProgress };
 
 export interface Impulse { _id: string; groupId: string | null; seq: number; channel: string; deviceTime: string; timeBasis: "device" | "pf-clock"; source?: "racetime" | "camera"; deviceTimeNs: string; deviceOffsetNs: string | null }
 
-export interface Group { _id: string; impulseIds: string[]; status: "collecting" | "extracting" | "ready"; warnings: string[]; createdAt: string }
+export interface Group { _id: string; impulseIds: string[]; status: "collecting" | "extracting" | "ready"; warnings: string[]; createdAt: string; captureError?: string | null }
 
 export interface Capture { _id: string; groupId: string; cameraId: string; url: string; columnsUrl: string; width: number; height: number; fps: number; sha256: string; frameCount?: number }
 

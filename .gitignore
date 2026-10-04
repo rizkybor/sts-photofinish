@@ -31,3 +31,6 @@ data/models/
 data/dataset/
 runs/
 agent/runs/
+
+# Dokumentasi internal (tidak masuk git)
+docs/

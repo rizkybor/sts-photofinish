@@ -6,7 +6,10 @@ import { closeQueue, fmtGap, fmtTime } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
 import type { FinishEvent } from "../lib/types";
 import FinishFeed from "./FinishFeed.vue";
-import { midX, tiltFromVerticalDeg, tiltLevel, type Line } from "../lib/geometry";
+import TriggerLog from "./TriggerLog.vue";
+import { midX, tiltFromVerticalDeg, tiltLevel, xAtY, type Line } from "../lib/geometry";
+import { toast } from "../lib/ui";
+import RecIndicator from "./RecIndicator.vue";
 import AppIcon, { type IconName } from "./ui/AppIcon.vue";
 
 const emit = defineEmits<{ back: []; review: [f: FinishEvent] }>();
@@ -32,15 +35,43 @@ const LAYERS: Array<{ key: keyof typeof show; label: string; icon: IconName; col
 ];
 
 const socket = getSocket();
-const tilt = computed(() => (frame.value ? tiltFromVerticalDeg(frame.value.finishLine) : 0));
-const level = computed(() => tiltLevel(tilt.value));
+// Kelurusan diukur dari TIANG PHOTOCELL di gambar (dua titik yang diklik
+// operator), bukan dari koordinat garis finish — garis otomatis selalu tegak
+// sehingga tidak mengatakan apa-apa tentang posisi kamera.
+const measuring = ref(false);
+const polePts = ref<Array<{ x: number; y: number }>>([]);
+const pole = computed<Line | null>(() => {
+  if (polePts.value.length < 2) return null;
+  const [a, b] = polePts.value as [{ x: number; y: number }, { x: number; y: number }];
+  return { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+});
+const tilt = computed(() => (pole.value ? tiltFromVerticalDeg(pole.value) : null));
+const level = computed(() => (tilt.value === null ? null : tiltLevel(tilt.value)));
+/** Selisih garis finish terhadap tiang (px, di tengah tiang) — slit-scan harus tepat di tiang. */
+const finishOffset = computed(() => {
+  if (!pole.value || !frame.value) return null;
+  const y = (pole.value.y1 + pole.value.y2) / 2;
+  const px = xAtY(frame.value.finishLine, y) - xAtY(pole.value, y);
+  return { px, bad: Math.abs(px) > frame.value.width * 0.01 };
+});
+/** Titik terlalu berdekatan → sudut tidak akurat. */
+const MIN_POLE_SPAN = 0.3;
+
+function startMeasure() {
+  polePts.value = [];
+  measuring.value = true;
+}
+function resetPole() {
+  polePts.value = [];
+  measuring.value = false;
+}
 const gx = computed(() => guideX.value ?? (frame.value ? midX(frame.value.finishLine) : 0));
 const ageMs = computed(() => (frame.value ? now.value - frame.value.receivedAt : Infinity));
 const live = computed(() => ageMs.value < 2500);
 const ticks = computed(() => (frame.value ? [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => ({ x: (frame.value!.width * i) / 10, y: (frame.value!.height * i) / 10 })) : []));
 const LEVEL = {
-  ok: { text: "Lurus", cls: "status-success", note: "Garis finish tegak lurus. Kamera siap dipakai." },
-  warn: { text: "Sedikit miring", cls: "status-upcoming", note: "Rapikan posisi kamera atau koordinat PF_FINISH_LINE." },
+  ok: { text: "Lurus", cls: "status-success", note: "Tiang photocell tegak di gambar — kamera lurus." },
+  warn: { text: "Sedikit miring", cls: "status-upcoming", note: "Putar sedikit dudukan kamera, lalu ukur ulang." },
   bad: { text: "Miring", cls: "status-danger", note: "Atur ulang dudukan kamera sebelum lomba dimulai." },
 } as const;
 
@@ -69,22 +100,46 @@ async function onFrame(f: PreviewFrame) {
 async function subscribe() {
   error.value = "";
   frame.value = null;
+  resetPole(); // ukuran tiang hanya berlaku untuk kamera yang diukur
   const res = await socket.emitWithAck("preview:subscribe", cameraId.value);
   if (!res.ok) error.value = res.error;
   else if (!res.agents) error.value = "Capture Agent belum terhubung ke API.";
 }
 
-function placeGuide(ev: MouseEvent) {
+function clickStage(ev: MouseEvent) {
   if (!frame.value) return;
   const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-  guideX.value = Math.round(((ev.clientX - rect.left) / rect.width) * frame.value.width);
+  const x = Math.round(((ev.clientX - rect.left) / rect.width) * frame.value.width);
+  const y = Math.round(((ev.clientY - rect.top) / rect.height) * frame.value.height);
+  if (!measuring.value) {
+    guideX.value = x;
+    return;
+  }
+  const pts = [...polePts.value, { x, y }];
+  if (pts.length < 2) {
+    polePts.value = pts;
+    return;
+  }
+  const [a, b] = pts[0]!.y <= pts[1]!.y ? [pts[0]!, pts[1]!] : [pts[1]!, pts[0]!];
+  if (b.y - a.y < frame.value.height * MIN_POLE_SPAN) {
+    polePts.value = [];
+    toast("warning", "Titik terlalu berdekatan", "Klik ujung ATAS lalu ujung BAWAH tiang yang terlihat, sejauh mungkin, agar sudut akurat.");
+    return;
+  }
+  polePts.value = [a, b];
+  measuring.value = false;
+  guideX.value = Math.round(xAtY({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, frame.value.height / 2));
 }
+const onKey = (e: KeyboardEvent) => {
+  if (e.key === "Escape" && measuring.value) resetPole();
+};
 
 let timer: number | undefined;
 const resubscribe = () => void subscribe();
 onMounted(() => {
   socket.on("preview:frame", onFrame);
   socket.on("connect", resubscribe);
+  window.addEventListener("keydown", onKey);
   subscribe();
   timer = window.setInterval(() => (now.value = Date.now()), 500);
 });
@@ -92,13 +147,13 @@ onUnmounted(() => {
   socket.emit("preview:unsubscribe", cameraId.value);
   socket.off("preview:frame", onFrame);
   socket.off("connect", resubscribe);
+  window.removeEventListener("keydown", onKey);
   clearInterval(timer);
   if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
 });
 </script>
 
 <template>
-  <div class="crumbs"><button @click="emit('back')">Sesi Lomba</button><AppIcon name="chevron" /><span>Standby Kamera</span></div>
   <div class="page-head">
     <div class="grow">
       <h1 class="page-title">Standby Kamera</h1>
@@ -109,6 +164,8 @@ onUnmounted(() => {
       <span class="input-group"><AppIcon name="camera" /><input v-model="cameraId" class="input mono" @change="subscribe" /></span>
     </label>
   </div>
+
+  <RecIndicator variant="banner" :camera-id="cameraId" />
 
   <div v-if="closeQueue.length" class="close-alert" role="alert">
     <span class="close-icon"><AppIcon name="compare" /></span>
@@ -128,10 +185,9 @@ onUnmounted(() => {
         <span v-if="frame" class="readout">{{ frame.width }}×{{ frame.height }} · {{ frame.fps || "?" }} fps</span>
         <span class="spacer" />
         <span v-if="frame && show.guide" class="readout">garis imajiner x = {{ Math.round(gx) }}</span>
-        <button v-if="guideX !== null" class="btn btn-sm" @click="guideX = null"><AppIcon name="refresh" /> Ke garis finish</button>
       </div>
 
-      <div v-if="frame && imgUrl" class="stage" @click="placeGuide">
+      <div v-if="frame && imgUrl" class="stage" :class="{ measuring }" @click="clickStage">
         <img :src="imgUrl" alt="Gambar live kamera finish" draggable="false" />
         <svg :viewBox="`0 0 ${frame.width} ${frame.height}`" preserveAspectRatio="none">
           <g v-if="show.grid" class="grid">
@@ -141,6 +197,8 @@ onUnmounted(() => {
           <line v-if="show.level" class="level" x1="0" :x2="frame.width" :y1="frame.height / 2" :y2="frame.height / 2" />
           <line v-if="show.finish" class="finish" :x1="frame.finishLine.x1" :y1="frame.finishLine.y1" :x2="frame.finishLine.x2" :y2="frame.finishLine.y2" />
           <line v-if="show.guide" class="guide" :x1="gx" :x2="gx" y1="0" :y2="frame.height" />
+          <line v-if="pole" class="pole" :x1="pole.x1" :y1="pole.y1" :x2="pole.x2" :y2="pole.y2" />
+          <circle v-for="(p, i) in polePts" :key="i" class="pole-pt" :cx="p.x" :cy="p.y" r="6" />
           <g v-if="show.center" class="center">
             <circle :cx="frame.width / 2" :cy="frame.height / 2" r="14" />
             <line :x1="frame.width / 2 - 24" :x2="frame.width / 2 + 24" :y1="frame.height / 2" :y2="frame.height / 2" />
@@ -148,32 +206,48 @@ onUnmounted(() => {
           </g>
         </svg>
         <span v-if="!live" class="stale">Gambar tidak diperbarui</span>
+        <span v-if="measuring" class="measure-tip">{{ polePts.length ? "Klik ujung BAWAH tiang" : "Klik ujung ATAS tiang photocell" }} · Esc batal</span>
       </div>
       <div v-else class="empty" style="color: #b6c2cf">
         <AppIcon :name="error ? 'error' : 'camera'" />
         <strong style="color: #fff">{{ error || "Menunggu gambar dari kamera…" }}</strong>
         <span>Jalankan Capture Agent untuk kamera <span class="mono">{{ cameraId }}</span>.</span>
       </div>
-      <p class="hint" style="margin: 10px 0 0"><AppIcon name="touch" /> Klik gambar untuk memindahkan garis imajiner ke posisi tiang photocell.</p>
+      <p class="hint" style="margin: 10px 0 0"><AppIcon name="touch" /> Klik gambar untuk memindahkan garis imajiner. Untuk mengukur kelurusan, pakai <strong>Ukur tiang</strong> di panel kanan.</p>
     </section>
 
     <aside class="side">
       <FinishFeed @review="emit('review', $event)" />
+      <TriggerLog :camera-id="cameraId" :limit="5" />
 
       <section class="card">
-        <div class="section-label">Kelurusan garis finish</div>
+        <div class="section-label">Kelurusan kamera (tiang photocell)</div>
         <div class="gauge">
           <svg viewBox="-60 -60 120 120" class="dial" aria-hidden="true">
             <circle r="52" class="dial-ring" />
             <line x1="0" y1="-52" x2="0" y2="52" class="dial-ref" />
-            <line x1="0" y1="-46" x2="0" y2="46" class="dial-needle" :class="level" :transform="`rotate(${-tilt})`" />
+            <line v-if="tilt !== null" x1="0" y1="-46" x2="0" y2="46" class="dial-needle" :class="level" :transform="`rotate(${-tilt})`" />
           </svg>
           <div>
-            <div class="deg mono">{{ frame ? `${tilt >= 0 ? "+" : ""}${tilt.toFixed(2)}°` : "—" }}</div>
-            <span v-if="frame" class="status-pill" :class="LEVEL[level].cls"><span class="dot" />{{ LEVEL[level].text }}</span>
+            <div class="deg mono">{{ tilt !== null ? `${tilt >= 0 ? "+" : ""}${tilt.toFixed(2)}°` : "—" }}</div>
+            <span v-if="level" class="status-pill" :class="LEVEL[level].cls"><span class="dot" />{{ LEVEL[level].text }}</span>
+            <span v-else class="status-pill status-muted"><span class="dot" />Belum diukur</span>
           </div>
         </div>
-        <p class="muted" style="margin: 10px 0 0">{{ frame ? LEVEL[level].note : "Menunggu gambar." }}</p>
+        <p class="muted" style="margin: 10px 0 0">
+          <template v-if="measuring">{{ polePts.length ? "Sekarang klik ujung BAWAH tiang." : "Klik ujung ATAS tiang photocell di gambar." }}</template>
+          <template v-else-if="level">{{ LEVEL[level].note }}</template>
+          <template v-else>Klik dua titik pada tiang photocell di gambar — sudut tiang = kemiringan kamera.</template>
+        </p>
+        <div v-if="finishOffset" class="offset" :class="{ bad: finishOffset.bad }">
+          <AppIcon :name="finishOffset.bad ? 'warning' : 'check'" />
+          <span>Garis finish {{ Math.abs(finishOffset.px) < 1 ? "tepat di tiang" : `${Math.abs(Math.round(finishOffset.px))} px di ${finishOffset.px > 0 ? "kanan" : "kiri"} tiang` }}<template v-if="finishOffset.bad"> — atur garis finish di Pengaturan Kamera agar berimpit dengan tiang.</template></span>
+        </div>
+        <div class="row" style="margin-top: 10px">
+          <button class="btn btn-sm" :class="{ 'is-active': measuring }" :disabled="!frame" @click="measuring ? resetPole() : startMeasure()">
+            <AppIcon name="ruler" /> {{ measuring ? "Batal" : pole ? "Ukur ulang" : "Ukur tiang" }}
+          </button>
+        </div>
         <p class="hint" style="margin: 6px 0 0">Toleransi: ≤ 0,5° lurus · ≤ 2° rapikan · &gt; 2° atur ulang.</p>
       </section>
 
@@ -191,10 +265,10 @@ onUnmounted(() => {
         <summary class="section-label" style="cursor: pointer">Cara cek kelurusan</summary>
         <ol class="steps">
           <li>Arahkan kamera <strong>tegak lurus</strong> ke garis finish dari tepi sungai.</li>
-          <li>Klik gambar tepat di <strong>tiang photocell</strong> — garis biru pindah ke sana.</li>
-          <li>Tiang harus <strong>berimpit</strong> dengan garis biru dari atas sampai bawah. Bila condong, kamera miring.</li>
+          <li>Tekan <strong>Ukur tiang</strong>, lalu klik ujung <strong>atas</strong> dan ujung <strong>bawah</strong> tiang photocell di gambar (sejauh mungkin).</li>
+          <li>Indikator kelurusan <strong>hijau</strong> (≤ 0,5°). Bila tidak, putar dudukan kamera dan ukur ulang — ukuran lama tidak ikut bergerak.</li>
+          <li>Garis finish merah harus <strong>berimpit</strong> dengan tiang (panel menunjukkan selisihnya). Bila bergeser, atur di Pengaturan Kamera.</li>
           <li><strong>Garis datar</strong> kuning sejajar permukaan air / horizon.</li>
-          <li>Indikator kelurusan garis finish <strong>hijau</strong>.</li>
         </ol>
       </details>
     </aside>
@@ -219,6 +293,12 @@ onUnmounted(() => {
 .level { stroke: #facc15; stroke-width: 1.5; stroke-dasharray: 5 6; vector-effect: non-scaling-stroke; }
 .grid line { stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .center circle, .center line { stroke: #fff; stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
+.stage.measuring { cursor: cell; box-shadow: inset 0 0 0 3px #e879f9; }
+.pole { stroke: #e879f9; stroke-width: 3; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 2px #000); }
+.pole-pt { fill: #e879f9; stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.measure-tip { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); line-height: 1.2; background: #a21caf; color: #fff; font-weight: 700; font-size: 0.82rem; padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
+.offset { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 0.84rem; background: var(--ok-bg); color: var(--ok-ink); }
+.offset.bad { background: var(--warn-bg); color: var(--warn-ink); }
 .gauge { display: flex; align-items: center; gap: 16px; }
 .dial { width: 92px; height: 92px; flex: none; }
 .dial-ring { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }

@@ -34,16 +34,16 @@ function workText(s: SessionSummary) {
   <div v-if="sessions.loaded" class="heatbar">
     <div class="heatbar-inner">
       <button
-        v-if="armedSession" class="live" :class="{ current: armedSession._id === currentId }"
+        v-if="armedSession && armedSession._id !== currentId" class="live"
         :title="`Buka detail sesi aktif (A) — ${workText(armedSession)}`" @click="emit('open', armedSession._id)"
       >
         <span class="live-dot" />
         <span class="live-tag">AKTIF</span>
         <span class="live-label">{{ armedSession.label }}</span>
         <span class="live-meta">{{ armedSession.progress.finishes }} finish<template v-if="armedSession.progress.pending"> · {{ armedSession.progress.pending }} perlu ditinjau</template></span>
-        <kbd v-if="armedSession._id !== currentId">A</kbd>
+        <kbd>A</kbd>
       </button>
-      <span v-else class="idle"><AppIcon name="sensors" /> Tidak ada sesi aktif — sinyal RaceTime2 masuk ke daftar "tanpa sesi"</span>
+      <span v-else-if="!armedSession" class="idle"><AppIcon name="sensors" /> Tidak ada sesi aktif — sinyal RaceTime2 masuk ke daftar "tanpa sesi"</span>
 
       <div v-if="backlog.length" class="backlog">
         <span class="backlog-title">Berdekatan belum ditinjau</span>
@@ -68,10 +68,9 @@ function workText(s: SessionSummary) {
 <style scoped>
 .heatbar { position: sticky; top: var(--nav-h); z-index: 900; background: var(--surface); border-bottom: 1px solid var(--border); box-shadow: var(--shadow-sm); }
 .heatbar-inner { max-width: 1280px; margin: 0 auto; padding: 8px 16px; display: flex; align-items: center; gap: 12px; min-height: 52px; }
-.live { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; padding: 6px 12px; border-radius: 12px; background: var(--bad-bg); border: 1px solid var(--bad-line); color: var(--bad-ink); min-width: 0; max-width: 46%; }
-.live:hover { border-color: var(--bad); }
-.live.current { box-shadow: inset 0 0 0 2px var(--bad); }
-.live-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--bad); flex: none; animation: pulse 1.2s infinite; }
+.live { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; padding: 6px 12px; border-radius: 10px; background: var(--brand-soft); border: 1px solid transparent; color: var(--brand-ink); min-width: 0; max-width: 46%; }
+.live:hover { border-color: var(--brand-2); }
+.live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ok); flex: none; }
 .live-tag { font-weight: 800; font-size: 0.72rem; letter-spacing: 0.06em; }
 .live-label { font-weight: 800; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .live-meta { font-size: 0.8rem; white-space: nowrap; }
