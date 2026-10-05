@@ -19,7 +19,7 @@ class AgentConfig:
     camera_id: str
     camera_source: str
     camera_fps: float
-    finish_line: FinishLine
+    finish_line: FinishLine | None  # None = garis tegak otomatis di tengah (atur dari web)
     captures_dir: Path
     buffer_seconds: float
     frame_width: int | None
@@ -35,16 +35,15 @@ class AgentConfig:
         token = e.get("PF_DEVICE_TOKEN", "")
         if not token:
             raise SystemExit("PF_DEVICE_TOKEN kosong — buat dengan: npm run token:device -w api -- agent <nama>")
-        line = e.get("PF_FINISH_LINE", "")
-        if not line:
-            raise SystemExit("PF_FINISH_LINE kosong — isi x1,y1,x2,y2 (jalankan `pf-agent --preview` untuk melihat frame)")
+        # Kosong/"auto" = garis tegak di tengah; garis finish biasanya diatur dari halaman Pengaturan Kamera.
+        line = e.get("PF_FINISH_LINE", "").strip()
         return cls(
             api_url=e.get("PF_API_URL", "http://127.0.0.1:4100").rstrip("/"),
             device_token=token,
             camera_id=e.get("PF_CAMERA_ID", "cam-1"),
             camera_source=e.get("PF_CAMERA_SOURCE", "0"),
-            camera_fps=float(e.get("PF_CAMERA_FPS", "240")),
-            finish_line=FinishLine.parse(line),
+            camera_fps=float(e.get("PF_CAMERA_FPS", "30")),
+            finish_line=FinishLine.parse(line) if line and line.lower() != "auto" else None,
             captures_dir=Path(e.get("PF_CAPTURES_DIR", REPO_ROOT / "data" / "captures")).resolve(),
             buffer_seconds=float(e.get("PF_BUFFER_SECONDS", "20")),
             frame_width=int(e["PF_FRAME_WIDTH"]) if e.get("PF_FRAME_WIDTH") else None,

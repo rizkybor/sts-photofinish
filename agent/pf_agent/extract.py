@@ -209,10 +209,11 @@ def extract(
     )
 
 
-def preview_with_line(frame: np.ndarray, line: slitscan.FinishLine) -> np.ndarray:
+def preview_with_line(frame: np.ndarray, line: slitscan.FinishLine | None) -> np.ndarray:
     """Frame + garis finish + grid 100 px, untuk menentukan PF_FINISH_LINE."""
     out = frame.copy()
     h, w = out.shape[:2]
+    line = line or slitscan.FinishLine(w / 2, 0, w / 2, h - 1)
     for x in range(0, w, 100):
         cv2.line(out, (x, 0), (x, h), (80, 80, 80), 1)
         cv2.putText(out, str(x), (x + 2, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)

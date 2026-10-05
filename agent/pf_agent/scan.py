@@ -9,6 +9,7 @@ import time
 
 import cv2
 
+from .camera import open_capture
 from .preview import encode_preview
 from .settings import VIDEO_DIR
 
@@ -26,7 +27,7 @@ def thumbnail(frame) -> str | None:
 
 
 def _probe(index: int, timeout_s: float = 2.5):
-    cap = cv2.VideoCapture(index)
+    cap = open_capture(index)
     try:
         if not cap.isOpened():
             return None

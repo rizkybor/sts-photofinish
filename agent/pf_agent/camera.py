@@ -13,6 +13,7 @@ PF_CAMERA_SOURCE:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +27,16 @@ from .clock import now_ns
 log = logging.getLogger(__name__)
 
 FrameHandler = Callable[[int, np.ndarray], None]
+
+
+def open_capture(source: str | int) -> cv2.VideoCapture:
+    """Kamera nomor (USB) atau alamat/file. Di Windows pakai DirectShow untuk kamera USB."""
+    src = str(source)
+    if src.isdigit():
+        if sys.platform == "win32":
+            return cv2.VideoCapture(int(src), cv2.CAP_DSHOW)
+        return cv2.VideoCapture(int(src))
+    return cv2.VideoCapture(src)
 
 
 class CameraError(RuntimeError):
@@ -45,7 +56,7 @@ class CameraSource:
         self.frame_size: tuple[int, int] | None = None  # (width, height)
 
     def open(self) -> cv2.VideoCapture:
-        cap = cv2.VideoCapture(int(self.source) if self.source.isdigit() else self.source)
+        cap = open_capture(self.source)
         if not cap.isOpened():
             raise CameraError(f"Kamera tidak bisa dibuka: {self.source}")
         if not self.replay:

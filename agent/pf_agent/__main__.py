@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
+from pathlib import Path
 
 import cv2
 
@@ -9,6 +11,7 @@ from .camera import CameraError, CameraSource
 from .client import AgentClient
 from .config import AgentConfig
 from .extract import preview_with_line
+from .host import EXIT_ALREADY_RUNNING, keep_awake, load_env_file, single_instance
 from .pipeline import Pipeline
 from .settings import CameraSettings
 
@@ -16,10 +19,17 @@ from .settings import CameraSettings
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pf-agent", description="STS Photo Finish Capture Agent")
     parser.add_argument("--preview", action="store_true", help="simpan satu frame + garis finish ke preview.png lalu keluar")
+    parser.add_argument("--env-file", action="append", default=[], metavar="FILE",
+                        help="baca KEY=VALUE dari file (boleh berulang; yang belakangan menimpa)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    for f in args.env_file:
+        path = Path(f)
+        if not path.is_file():
+            raise SystemExit(f"File konfigurasi tidak ditemukan: {path.resolve()}")
+        load_env_file(path)
     cfg = AgentConfig.from_env()
     camera = CameraSource(cfg.camera_source, cfg.camera_fps, cfg.frame_width, cfg.frame_height)
 
@@ -33,6 +43,11 @@ def main() -> None:
         cv2.imwrite(str(out), preview_with_line(frame, cfg.finish_line))
         print(f"Frame {frame.shape[1]}x{frame.shape[0]} disimpan ke {out}")
         return
+
+    if not single_instance():
+        logging.error("Agent kamera lain sudah berjalan di komputer ini — satu kamera hanya untuk satu agent.")
+        sys.exit(EXIT_ALREADY_RUNNING)
+    keep_awake()
 
     # Kamera dibuka oleh client setelah API menerima agent ini (lihat AgentClient.run).
     pipeline = Pipeline(CameraSettings.from_agent_config(cfg), cfg.buffer_seconds)
