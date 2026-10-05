@@ -34,9 +34,17 @@ onUnmounted(() => ro?.disconnect());
 // ---------------------------------------------------------------- data kolom
 const pfTimes = ref<string[] | null>(null);
 const sliceHeight = ref<number | null>(null);
+/** File rekaman tidak ada di server ini (mis. dibuat server lain yang memakai database sama). */
+const missing = ref(false);
 watch(() => props.capture.columnsUrl, async (url) => {
+  missing.value = false;
   try {
-    const d = (await (await fetch(url)).json()) as { pfTimes?: string[] | null; sliceHeight?: number };
+    const res = await fetch(url);
+    if (res.status === 404) {
+      missing.value = true;
+      return;
+    }
+    const d = (await res.json()) as { pfTimes?: string[] | null; sliceHeight?: number };
     pfTimes.value = d.pfTimes ?? null;
     emit("times", pfTimes.value);
     sliceHeight.value = typeof d.sliceHeight === "number" ? d.sliceHeight : null;
@@ -127,12 +135,16 @@ function onLeave() {
 </script>
 
 <template>
-  <div ref="scroller" class="scroller">
+  <div v-if="missing" class="missing" role="alert">
+    <strong>File rekaman tidak ditemukan di server ini.</strong>
+    <span>Data finish ada, tetapi gambarnya tidak tersimpan di server ini — biasanya karena finish dibuat server lain yang memakai database yang sama (mis. uji coba lokal). Finish ini aman dihapus bila memang data uji.</span>
+  </div>
+  <div v-else ref="scroller" class="scroller">
     <div
       class="stage" :class="{ markable: canMark }" :style="{ width: width + 'px', height: slicePx * zy + 'px' }"
       @mousemove="onMove" @mouseleave="onLeave" @click="canMark && emit('mark', columnAt($event))"
     >
-      <img :src="capture.url" :class="{ pixel: smooth === false }" :style="{ width: width + 'px', height: capture.height * zy + 'px' }" alt="Slit-scan garis finish" draggable="false" />
+      <img :src="capture.url" @error="missing = true" :class="{ pixel: smooth === false }" :style="{ width: width + 'px', height: capture.height * zy + 'px' }" alt="Slit-scan garis finish" draggable="false" />
       <div v-if="focusColumn != null" class="focus" :style="{ left: (focusColumn + 0.5) * zx + 'px' }" title="Posisi foto frame" />
       <div v-for="m in impulseMarks" :key="'i' + m.n" class="impulse" :class="{ cam: m.camera }" :style="{ left: m.x + 'px' }" :title="m.camera ? `Pemicu kamera ${m.n}` : `Sinyal RaceTime2 ${m.n}`">
         <span class="impulse-tag">{{ m.n }}</span>
@@ -152,6 +164,8 @@ function onLeave() {
 </template>
 
 <style scoped>
+.missing { display: flex; flex-direction: column; gap: 4px; padding: 18px; border-radius: 10px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.5); color: #fde68a; font-size: 0.86rem; }
+.missing strong { color: #fff; }
 .scroller { overflow-x: auto; border-radius: 12px; background: var(--race-2); border: 1px solid rgba(255, 255, 255, 0.08); }
 .stage { position: relative; line-height: 0; overflow: hidden; }
 .stage.markable { cursor: crosshair; }
