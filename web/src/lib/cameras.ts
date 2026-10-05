@@ -101,15 +101,29 @@ function alarm() {
   setTimeout(beep, 900);
 }
 
-watch(() => recState.value.kind, (kind, prev) => {
-  if (Date.now() - since < GRACE_MS) return;
-  const st = recState.value;
-  if (st.kind === "not-recording" && prev !== "not-recording") {
-    alarm();
-    toast("error", `Kamera ${st.cameraId} TIDAK MEREKAM`, `${st.reason} Finish di sesi "${st.sessionLabel}" tidak terekam sampai kamera pulih — sinyal RaceTime2 tetap tercatat.`, 15000);
-  } else if (st.kind === "recording" && prev === "not-recording") {
-    toast("success", `Kamera ${st.cameraId} merekam lagi`, "Gambar kamera kembali normal.");
+/** Putus sesaat (internet, kamera dibuka ulang) pulih sendiri — alarm hanya bila bertahan. */
+const ALARM_AFTER_MS = 5000;
+let pendingAlarm: ReturnType<typeof setTimeout> | null = null;
+let alarmed = false;
+
+watch(() => recState.value.kind, (kind) => {
+  if (kind === "not-recording") {
+    if (pendingAlarm || alarmed || Date.now() - since < GRACE_MS) return;
+    pendingAlarm = setTimeout(() => {
+      pendingAlarm = null;
+      const st = recState.value;
+      if (st.kind !== "not-recording") return;
+      alarmed = true;
+      alarm();
+      toast("error", `Kamera ${st.cameraId} TIDAK MEREKAM`, `${st.reason} Finish di sesi "${st.sessionLabel}" tidak terekam sampai kamera pulih — sinyal RaceTime2 tetap tercatat.`, 15000);
+    }, ALARM_AFTER_MS);
+    return;
   }
+  if (pendingAlarm) clearTimeout(pendingAlarm);
+  pendingAlarm = null;
+  const st = recState.value;
+  if (alarmed && st.kind === "recording") toast("success", `Kamera ${st.cameraId} merekam lagi`, "Gambar kamera kembali normal.");
+  alarmed = false;
 });
 
 let warnedAt: number | null = null;

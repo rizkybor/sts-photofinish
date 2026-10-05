@@ -10,6 +10,7 @@ agent tetap tersambung sehingga sumber kamera bisa diganti dari web.
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
 from typing import Callable
@@ -221,6 +222,8 @@ class Pipeline:
             # ms sejak frame terakhir — besar berarti kamera tidak mengirim gambar
             "lastFrameAgeMs": self.frame_age_ms(),
             "hostBattery": host_battery(),
+            # Komputer tempat agent berjalan — kamera yang dipindai/dipakai ada di sini.
+            "host": socket.gethostname().removesuffix(".local"),
             "finishLine": None if fl is None else {"x1": fl.x1, "y1": fl.y1, "x2": fl.x2, "y2": fl.y2},
             "lastError": self.last_error,
             "notice": self.notice,

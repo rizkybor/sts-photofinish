@@ -23,6 +23,10 @@ from .settings import CameraSettings
 log = logging.getLogger(__name__)
 
 PREVIEW_INTERVAL_S = 0.25  # ±4 fps — cukup untuk mengatur posisi kamera
+# API jauh (Render/VPS): cuplikan lebih kecil & jarang agar unggahan internet lokasi
+# tidak penuh — rekaman finish dan sinkron jam lebih penting dari gambar standby.
+REMOTE_PREVIEW_INTERVAL_S = 0.5
+REMOTE_PREVIEW_WIDTH = 640
 
 SYNC_INTERVAL_S = 2.0
 SYNC_BURST = 4
@@ -30,6 +34,7 @@ WAIT_FOR_FRAMES_S = 10.0
 
 
 REJECT_GRACE_S = 1.0
+CLOCK_WAIT_S = 10.0  # batas tunggu sinkron jam sebelum ekstraksi
 
 
 
@@ -53,7 +58,7 @@ class AgentClient:
         self.http = httpx.Client(base_url=cfg.api_url, headers={"authorization": f"Bearer {cfg.device_token}"}, timeout=10)
         self._stop = threading.Event()
         self.sio.on("connect", self._on_connect)
-        self.sio.on("disconnect", lambda *_: log.warning("Terputus dari API — mencoba lagi"))
+        self.sio.on("disconnect", lambda *args: log.warning("Terputus dari API (%s) — mencoba lagi", args[0] if args else "?"))
         self.sio.on("agent:extract", self._on_extract)
         self.sio.on("agent:preview", self._on_preview)
         self.sio.on("agent:rejected", self._on_rejected)
@@ -62,7 +67,8 @@ class AgentClient:
         self.rejected: str | None = None
 
     def run(self) -> None:
-        self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token, "cameraId": self.cfg.camera_id}, transports=["websocket"], wait_timeout=10)
+        self.sio.connect(self.cfg.api_url, auth={"token": self.cfg.device_token, "cameraId": self.cfg.camera_id, "bootId": self._boot}, transports=["websocket"], wait_timeout=10,
+                         retry=True)  # internet/Wi-Fi belum siap saat laptop baru menyala → terus mencoba
         # Tunggu sebentar: API menolak agent kedua untuk kamera yang sama segera
         # setelah connect. Kamera baru dibuka SETELAH itu — agent duplikat tidak
         # pernah merebut kamera dari agent yang sedang berjalan.
@@ -208,11 +214,11 @@ class AgentClient:
                         "height": int(frame.shape[0]),
                         "fps": round(getattr(self.pipeline.camera, "measured_fps", 0.0), 1),
                         "finishLine": {"x1": line.x1, "y1": line.y1, "x2": line.x2, "y2": line.y2},
-                        "jpeg": encode_preview(frame),
+                        "jpeg": encode_preview(frame, REMOTE_PREVIEW_WIDTH, 65) if self.cfg.upload_captures else encode_preview(frame),
                     })
                 except Exception as err:  # noqa: BLE001 — cuplikan tidak boleh mengganggu perekaman
                     log.debug("cuplikan gagal: %s", err)
-            self._stop.wait(PREVIEW_INTERVAL_S)
+            self._stop.wait(REMOTE_PREVIEW_INTERVAL_S if self.cfg.upload_captures else PREVIEW_INTERVAL_S)
 
     # ------------------------------------------------------------ ekstraksi
 
@@ -224,6 +230,11 @@ class AgentClient:
         if req.get("cameraId") != self.cfg.camera_id:
             return
         try:
+            # Setelah (re)connect, API langsung meminta ekstraksi yang tertunda — sinkron
+            # jam pertama butuh ±1 dtk. Tunggu dulu; frame tetap aman di buffer.
+            deadline = time.monotonic() + CLOCK_WAIT_S
+            while not self.clock.ready and time.monotonic() < deadline:
+                time.sleep(0.1)
             if not self.clock.ready:
                 raise RuntimeError("Jam belum tersinkron dengan API")
             best = self.clock.best()

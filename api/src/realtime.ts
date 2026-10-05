@@ -8,6 +8,8 @@ import type { Bus, Service } from "./service.js";
 const ACK_TIMEOUT_MS = 5000;
 /** Cuplikan standby JPEG ±100 KB; batas socket dinaikkan secukupnya. */
 const MAX_SOCKET_MESSAGE = 1024 * 1024;
+/** Koneksi agent tanpa pesan selama ini dianggap mati (agent mengirim status/sinkron jam tiap ±2 dtk). */
+const STALE_AGENT_MS = 6000;
 const MAX_PREVIEW_JPEG = 900 * 1024;
 const CAMERA_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -122,18 +124,30 @@ export function createRealtime(httpServer: HttpServer, cfg: Config) {
         // Satu kamera = satu agent. Dua agent dengan cameraId sama membuat
         // cuplikan standby bergantian (berkedip) dan rekaman terkirim ganda.
         const cameraId = socket.handshake.auth?.cameraId;
+        const bootId = typeof socket.handshake.auth?.bootId === "string" ? socket.handshake.auth.bootId : null;
+        // Setiap pesan dari agent (status, sinkron jam) = tanda koneksi masih hidup.
+        socket.data.lastSeen = Date.now();
+        socket.use((_packet, next) => { socket.data.lastSeen = Date.now(); next(); });
+        let replaced: Socket[] = [];
         if (typeof cameraId === "string" && CAMERA_ID.test(cameraId)) {
-          const dup = [...(io.sockets.adapter.rooms.get("agents") ?? [])]
+          const others = [...(io.sockets.adapter.rooms.get("agents") ?? [])]
             .map((id) => io.sockets.sockets.get(id))
-            .some((s) => s && s.id !== socket.id && s.data.cameraId === cameraId);
-          if (dup) {
+            .filter((s): s is Socket => !!s && s.id !== socket.id && s.data.cameraId === cameraId);
+          // Agent yang sama menyambung ulang (internet putus sesaat), atau koneksi lama
+          // sudah diam (belum terdeteksi putus di balik proxy) → ambil alih, jangan tolak.
+          const live = others.filter((s) => !(bootId && s.data.bootId === bootId) && Date.now() - (s.data.lastSeen ?? 0) < STALE_AGENT_MS);
+          if (live.length) {
             socket.emit("agent:rejected", { error: `Kamera "${cameraId}" sudah dipakai agent lain yang sedang berjalan. Hentikan agent lama (Ctrl+C) atau pakai PF_CAMERA_ID berbeda.` });
             setTimeout(() => socket.disconnect(true), 200);
             return;
           }
+          replaced = others;
           socket.data.cameraId = cameraId;
+          socket.data.bootId = bootId;
         }
         socket.join("agents");
+        // Putuskan koneksi lama SETELAH yang baru bergabung — status kamera tidak sempat "terputus".
+        for (const old of replaced) old.disconnect(true);
         if (socket.data.cameraId) {
           const camId = socket.data.cameraId as string;
           socket.on("agent:status", (st: unknown) => {

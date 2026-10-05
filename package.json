@@ -19,7 +19,13 @@
     "prod:status": "pm2 status",
     "prod:logs": "pm2 logs --lines 100",
     "prod:delete": "pm2 delete ecosystem.config.cjs",
-    "dev:local": "bash scripts/dev-local.sh"
+    "dev:local": "bash scripts/dev-local.sh",
+    "agent:render": "pm2 delete pf-agent-render >/dev/null 2>&1; bash scripts/run-agent-render.sh --check && pm2 start scripts/run-agent-render.sh --name pf-agent-render --interpreter bash --time --restart-delay 3000 --max-restarts 50 && echo 'Agent berjalan di latar. Log: npm run agent:render:logs · Berhenti: npm run agent:render:stop'",
+    "agent:render:logs": "pm2 logs pf-agent-render --lines 50",
+    "agent:render:stop": "pm2 delete pf-agent-render",
+    "agent:render:status": "pm2 status pf-agent-render && bash scripts/agent-autostart.sh status",
+    "agent:autostart:on": "bash scripts/agent-autostart.sh on",
+    "agent:autostart:off": "bash scripts/agent-autostart.sh off"
   },
   "engines": {
     "node": ">=20"

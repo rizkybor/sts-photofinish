@@ -27,7 +27,7 @@ interface ObjectFilterStatus {
   passed?: number; rejected?: number; lastLabel?: string | null; lastRejected?: string | null; lastMs?: number | null;
 }
 interface Status {
-  cameraId: string; connected?: boolean; running?: boolean; width?: number; height?: number; measuredFps?: number;
+  cameraId: string; connected?: boolean; host?: string; running?: boolean; width?: number; height?: number; measuredFps?: number;
   finishLine?: Line | null; lastError?: string | null; settings?: Config; lastFrameAgeMs?: number | null; notice?: string | null; retrying?: boolean;
   objectFilter?: ObjectFilterStatus; detector?: { available: boolean; models: string[] };
 }
@@ -392,6 +392,9 @@ const shownLine = computed<Line | null>(() => {
       <section class="card status-card">
         <div class="row">
           <span class="status-pill" :class="current?.connected ? 'status-success' : 'status-danger'"><span class="dot" />{{ current?.connected ? "Agent terhubung" : "Agent tidak terhubung" }}</span>
+          <span v-if="current?.connected && status?.host" class="host" title="Kamera yang dipindai & dipakai adalah kamera yang tercolok di komputer ini — bukan di perangkat yang membuka halaman ini">
+            <AppIcon name="laptop" /> Kamera di komputer <strong>{{ status.host }}</strong>
+          </span>
           <span v-if="current?.connected && status?.running === false" class="status-pill status-danger"><span class="dot" />Kamera tidak berjalan</span>
           <span v-else-if="current?.connected && (status?.lastFrameAgeMs ?? 0) > 3000" class="status-pill status-danger"><span class="dot" />Kamera tidak mengirim gambar</span>
         </div>
@@ -420,6 +423,10 @@ const shownLine = computed<Line | null>(() => {
               <AppIcon :name="busy === 'scan' ? 'pending' : 'search'" /> {{ busy === "scan" ? "Memindai…" : scanResult ? "Pindai ulang" : "Pindai kamera" }}
             </button>
           </div>
+          <p v-if="current?.connected && status?.host" class="hint" style="margin: 0 0 10px">
+            Daftar ini berisi kamera yang tercolok di komputer <strong>{{ status.host }}</strong> (tempat agent berjalan), bukan di perangkat yang membuka halaman ini.
+            Untuk memakai kamera di komputer lain, jalankan agent di komputer itu.
+          </p>
           <div v-if="scanResult?.cameras.length" class="device-grid" role="radiogroup" aria-label="Kamera">
             <button
               v-for="c in scanResult.cameras" :key="c.index" type="button" class="device" :class="{ active: form.source === String(c.index) }"
@@ -431,7 +438,7 @@ const shownLine = computed<Line | null>(() => {
               <small>{{ c.kind ? KIND_META[c.kind].label : "Jenis tidak dikenali" }} · {{ c.width }}×{{ c.height }}</small>
             </button>
           </div>
-          <p v-else-if="scanResult" class="hint" style="margin: 8px 0 0">Tidak ada kamera ditemukan di laptop agent. Cek sambungan kamera lalu Pindai ulang.</p>
+          <p v-else-if="scanResult" class="hint" style="margin: 8px 0 0">Tidak ada kamera ditemukan di komputer agent{{ status?.host ? ` (${status.host})` : "" }}. Cek sambungan kamera lalu Pindai ulang.</p>
           <p v-else class="hint" style="margin: 8px 0 0">
             Dipakai sekarang: <strong>{{ deviceName(form.source) }}</strong>.
             <template v-if="current?.connected">{{ busy === "scan" ? "Mencari kamera lain…" : "Klik Pindai kamera untuk melihat semua kamera beserta gambarnya." }}</template>
@@ -627,6 +634,7 @@ const shownLine = computed<Line | null>(() => {
 .chip-toggle.on small { color: rgba(255, 255, 255, 0.75); }
 .filter-stats { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .trigger-log { margin-top: 12px; padding: 0; box-shadow: none; border: 0; }
+.host { display: inline-flex; align-items: center; gap: 6px; font-size: 0.86rem; color: var(--text-2); }
 .chip-ok { background: var(--ok-bg); color: var(--ok-ink); }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr); gap: 20px; align-items: start; }
