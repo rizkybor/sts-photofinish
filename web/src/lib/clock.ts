@@ -44,9 +44,13 @@ export function applyStatus(status: ClockStatus) {
 
 /** Waktu PF saat ini "HH:MM:SS.mmm", atau null bila belum terkalibrasi. */
 export function pfNow(): string | null {
+  return pfAt(BigInt(Math.round(nowUs() + clock.skewUs)) * 1000n);
+}
+
+/** Jam server (ns epoch) → waktu PF "HH:MM:SS.mmm", atau null bila belum terkalibrasi. */
+export function pfAt(serverNs: bigint): string | null {
   const off = clock.status?.effectiveOffsetNs;
   if (!off) return null;
-  const serverNs = BigInt(Math.round(nowUs() + clock.skewUs)) * 1000n;
   let tod = (serverNs - BigInt(off)) % DAY_NS;
   if (tod < 0n) tod += DAY_NS;
   const ms = Number(tod / 1_000_000n);

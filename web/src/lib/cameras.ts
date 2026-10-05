@@ -12,6 +12,8 @@ interface CameraStatus {
   cameraId: string; connected?: boolean; running?: boolean; retrying?: boolean;
   measuredFps?: number; lastFrameAgeMs?: number | null; lastError?: string | null;
   hostBattery?: { percent: number; charging: boolean } | null;
+  /** Jam API − jam agent (ns); null bila agent belum tersinkron. */
+  agentOffsetNs?: string | null;
   objectFilter?: { enabled: boolean; classes?: string[]; recent?: TriggerDecision[] };
 }
 

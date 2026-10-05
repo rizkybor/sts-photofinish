@@ -3,6 +3,7 @@
 // beserta alasannya — operator tahu kenapa sebuah lintasan tidak direkam.
 import { computed } from "vue";
 import { cameraStatus } from "../lib/cameras";
+import { pfAt } from "../lib/clock";
 import AppIcon from "./ui/AppIcon.vue";
 
 const props = defineProps<{ cameraId: string; limit?: number }>();
@@ -17,7 +18,17 @@ const translate = (text: string) => text.replace(/\b([a-z][a-z ]*?) (\d\.\d\d)\b
 
 const filter = computed(() => cameraStatus(props.cameraId)?.objectFilter ?? null);
 const items = computed(() => (filter.value?.recent ?? []).slice(0, props.limit ?? 8));
-const fmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/**
+ * Waktu pemicu dalam jam Photo Finish (terkalibrasi, sama dengan jam di navbar & gambar
+ * slit-scan). Waktu pemicu tercatat dengan jam agent → + selisih ke jam server → jam PF.
+ */
+function fmt(agentNs: number): { text: string; pf: boolean } {
+  const offset = cameraStatus(props.cameraId)?.agentOffsetNs;
+  const pf = pfAt(BigInt(Math.round(agentNs)) + BigInt(offset ?? "0"));
+  if (pf) return { text: pf, pf: true };
+  // Jam PF belum dikalibrasi: jam komputer sebagai cadangan, ditandai.
+  return { text: new Date(agentNs / 1e6).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), pf: false };
+}
 </script>
 
 <template>
@@ -28,7 +39,7 @@ const fmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString("id-ID", { hou
       <li v-for="d in items" :key="d.at" :class="d.ok ? 'ok' : 'skip'">
         <AppIcon :name="d.ok ? 'check' : 'warning'" />
         <div class="grow">
-          <div class="head"><strong>{{ d.ok ? "Diteruskan" : "Diabaikan" }}</strong><span class="mono">{{ fmt(d.at) }}</span></div>
+          <div class="head"><strong>{{ d.ok ? "Diteruskan" : "Diabaikan" }}</strong><span class="mono" :title="fmt(d.at).pf ? 'Jam Photo Finish (terkalibrasi)' : 'Jam Photo Finish belum dikalibrasi — jam komputer'">{{ fmt(d.at).text }}<template v-if="!fmt(d.at).pf"> *</template></span></div>
           <span v-if="d.ok">{{ translate(d.seen) }} melintasi garis finish — diteruskan sebagai pemicu finish.</span>
           <span v-else>{{ translate(d.reason ?? `Terlihat: ${d.seen}`) }}</span>
         </div>

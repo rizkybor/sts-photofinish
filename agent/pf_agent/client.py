@@ -161,7 +161,9 @@ class AgentClient:
         if self.pipeline is None or not self.sio.connected:
             return
         try:
-            self.sio.emit("agent:status", {"cameraId": self.cfg.camera_id, **self.pipeline.status()})
+            # Selisih jam API − jam agent: web mengubah waktu pemicu (jam agent) ke jam Photo Finish.
+            offset = str(self.clock.best().offset_ns) if self.clock.ready else None
+            self.sio.emit("agent:status", {"cameraId": self.cfg.camera_id, "agentOffsetNs": offset, **self.pipeline.status()})
         except Exception as err:  # noqa: BLE001
             log.debug("status gagal dikirim: %s", err)
 
