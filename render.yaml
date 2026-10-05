@@ -1,0 +1,46 @@
+# Render Blueprint — API + web app STS Photo Finish (satu Web Service).
+# Agent kamera & sts-timingsystem TETAP di laptop lokasi; keduanya tersambung
+# ke URL Render lewat internet. Panduan: docs/PANDUAN-RENDER.md
+services:
+  - type: web
+    name: sts-photofinish
+    runtime: node
+    region: singapore          # jeda terkecil ke Indonesia
+    plan: starter              # JANGAN free: tidur saat sepi & tidak bisa memakai disk
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start -w api
+    healthCheckPath: /health
+    # Rekaman finish (bukti lomba) harus di disk permanen — disk bawaan Render
+    # terhapus setiap deploy/restart.
+    disk:
+      name: captures
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: PF_HOST
+        value: 0.0.0.0
+      - key: PF_TRUST_PROXY
+        value: "true"
+      - key: PF_CAPTURES_DIR
+        value: /var/data/captures
+      - key: PF_MONGO_DB
+        value: sts_photofinish
+      # Diisi manual di dashboard Render (sync: false = tidak disimpan di repo).
+      - key: PF_MONGO_URL
+        sync: false
+      - key: PF_TIMING_DB
+        sync: false
+      - key: PF_CORS_ORIGINS
+        sync: false
+      # Harus SAMA dengan PF_HMAC_SECRET di sts-timingsystem — isi manual.
+      - key: PF_HMAC_SECRET
+        sync: false
+      # Dibuat acak oleh Render (≥ 32 karakter).
+      - key: PF_JWT_SECRET
+        generateValue: true
+      - key: PF_FILE_URL_SECRET
+        generateValue: true

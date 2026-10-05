@@ -41,7 +41,8 @@ const Env = z.object({
 export type Config = z.infer<typeof Env> & { corsOrigins: string[] };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = Env.safeParse(env);
+  // Hosting seperti Render memberi port lewat PORT; PF_PORT tetap diutamakan bila diisi.
+  const parsed = Env.safeParse({ ...env, PF_PORT: env.PF_PORT ?? env.PORT });
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`);
     throw new Error(`Konfigurasi .env tidak valid:\n${issues.join("\n")}`);
