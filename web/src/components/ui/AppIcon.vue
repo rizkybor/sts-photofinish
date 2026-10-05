@@ -53,12 +53,17 @@ import volume from "@iconify-icons/ic/baseline-volume-up";
 import volumeOff from "@iconify-icons/ic/baseline-volume-off";
 import compare from "@iconify-icons/ic/baseline-compare";
 import skipNext from "@iconify-icons/ic/baseline-skip-next";
+import fullscreen from "@iconify-icons/ic/baseline-fullscreen";
+import fullscreenExit from "@iconify-icons/ic/baseline-fullscreen-exit";
+import visibility from "@iconify-icons/ic/baseline-visibility";
+import visibilityOff from "@iconify-icons/ic/baseline-visibility-off";
 
 const ICONS = {
   add, arrowBack, camera, check, chevron, close, del, doneAll, down, edit, error, finish, focus, grid, groups, history,
   info, level, lock, logout, pending, person, play, refresh, ruler, search, sensors, stop, target, timer, touch, tune,
   vertical, verified, warning, water, wifi, wifiOff, zoom,
   laptop, iphone, usb, ipcam, movie, settings, restart, save, volume, volumeOff, compare, skipNext,
+  fullscreen, fullscreenExit, visibility, visibilityOff,
 } as const;
 export type IconName = keyof typeof ICONS;
 

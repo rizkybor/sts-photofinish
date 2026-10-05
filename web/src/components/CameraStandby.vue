@@ -2,7 +2,8 @@
 // Standby kamera: gambar live + garis imajiner tegak lurus untuk memastikan
 // kamera lurus terhadap garis finish/tiang photocell sebelum lomba.
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
-import { closeQueue, fmtGap, fmtTime } from "../lib/sessions";
+import { pfNow } from "../lib/clock";
+import { armedSession, closeQueue, fmtGap, fmtTime, isTyping } from "../lib/sessions";
 import { getSocket } from "../lib/socket";
 import type { FinishEvent } from "../lib/types";
 import FinishFeed from "./FinishFeed.vue";
@@ -108,6 +109,8 @@ async function subscribe() {
 
 function clickStage(ev: MouseEvent) {
   if (!frame.value) return;
+  // Layar penuh: ketukan yang memunculkan kontrol tidak ikut memindahkan garis (tablet).
+  if (fs.value && Date.now() - wokeAt < 400) return;
   const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
   const x = Math.round(((ev.clientX - rect.left) / rect.width) * frame.value.width);
   const y = Math.round(((ev.clientY - rect.top) / rect.height) * frame.value.height);
@@ -130,8 +133,59 @@ function clickStage(ev: MouseEvent) {
   measuring.value = false;
   guideX.value = Math.round(xAtY({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, frame.value.height / 2));
 }
+// ---------------------------------------------------------------- layar penuh
+// Seperti siaran langsung: gambar memenuhi layar, info (jam PF, REC, pemicu,
+// finish) tetap tampil di atasnya; tombol kontrol hilang saat mouse diam.
+type FsEl = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> | void };
+const viewer = ref<HTMLElement | null>(null);
+const fs = ref(false);
+const showInfo = ref(true);
+const controls = ref(true);
+let idleTimer: number | undefined;
+let wokeAt = 0;
+function poke() {
+  if (!controls.value) wokeAt = Date.now();
+  controls.value = true;
+  clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => (controls.value = false), 3000);
+}
+async function enterFs() {
+  fs.value = true;
+  poke();
+  const el = viewer.value as FsEl | null;
+  try {
+    if (el?.requestFullscreen) await el.requestFullscreen();
+    else await el?.webkitRequestFullscreen?.();
+  } catch { /* tidak didukung (mis. iPhone) — tetap memenuhi jendela browser */ }
+}
+async function exitFs() {
+  fs.value = false;
+  const d = document as FsDoc;
+  try {
+    if (d.fullscreenElement) await d.exitFullscreen();
+    else if (d.webkitFullscreenElement) await d.webkitExitFullscreen?.();
+  } catch { /* abaikan */ }
+}
+const toggleFs = () => (fs.value ? exitFs() : enterFs());
+function onFsChange() {
+  const d = document as FsDoc;
+  if (!d.fullscreenElement && !d.webkitFullscreenElement) fs.value = false; // keluar lewat Esc
+}
+/** Tinjau dari layar penuh: keluar dulu agar halaman sesi tampil normal. */
+function review(f: FinishEvent) {
+  void exitFs();
+  emit("review", f);
+}
+const pfClock = computed(() => (now.value, pfNow()));
+
 const onKey = (e: KeyboardEvent) => {
-  if (e.key === "Escape" && measuring.value) resetPole();
+  if (e.key === "Escape" && measuring.value) return resetPole();
+  if (e.key === "Escape" && fs.value) return void exitFs();
+  if ((e.key === "f" || e.key === "F") && !isTyping(e)) {
+    e.preventDefault();
+    void toggleFs();
+  }
 };
 
 let timer: number | undefined;
@@ -140,6 +194,8 @@ onMounted(() => {
   socket.on("preview:frame", onFrame);
   socket.on("connect", resubscribe);
   window.addEventListener("keydown", onKey);
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
   subscribe();
   timer = window.setInterval(() => (now.value = Date.now()), 500);
 });
@@ -148,6 +204,9 @@ onUnmounted(() => {
   socket.off("preview:frame", onFrame);
   socket.off("connect", resubscribe);
   window.removeEventListener("keydown", onKey);
+  document.removeEventListener("fullscreenchange", onFsChange);
+  document.removeEventListener("webkitfullscreenchange", onFsChange);
+  clearTimeout(idleTimer);
   clearInterval(timer);
   if (imgUrl.value) URL.revokeObjectURL(imgUrl.value);
 });
@@ -179,12 +238,17 @@ onUnmounted(() => {
   </div>
 
   <div class="layout">
-    <section class="race-window">
+    <section
+      ref="viewer" class="race-window" :class="{ fs, idle: fs && !controls }"
+      :style="frame ? { '--ar': String(frame.width / frame.height) } : undefined"
+      @mousemove="fs && poke()" @touchstart.passive="fs && poke()"
+    >
       <div class="race-toolbar">
         <span class="status-pill" :class="live ? 'status-live' : 'status-muted'"><span class="dot" />{{ live ? "LIVE" : "Tidak ada gambar" }}</span>
         <span v-if="frame" class="readout">{{ frame.width }}×{{ frame.height }} · {{ frame.fps || "?" }} fps</span>
         <span class="spacer" />
         <span v-if="frame && show.guide" class="readout">garis imajiner x = {{ Math.round(gx) }}</span>
+        <button class="btn btn-sm" title="Layar penuh (F)" @click="enterFs"><AppIcon name="fullscreen" /> Layar penuh</button>
       </div>
 
       <div v-if="frame && imgUrl" class="stage" :class="{ measuring }" @click="clickStage">
@@ -213,6 +277,35 @@ onUnmounted(() => {
         <strong style="color: #fff">{{ error || "Menunggu gambar dari kamera…" }}</strong>
         <span>Jalankan Capture Agent untuk kamera <span class="mono">{{ cameraId }}</span>.</span>
       </div>
+      <template v-if="fs">
+        <div class="ov-top">
+          <span class="status-pill" :class="live ? 'status-live' : 'status-muted'"><span class="dot" />{{ live ? "LIVE" : "Tidak ada gambar" }}</span>
+          <RecIndicator />
+          <span class="ov-chip ov-clock mono" title="Jam Photo Finish">{{ pfClock ?? "--:--:--.---" }}</span>
+          <span v-if="armedSession" class="ov-chip">{{ armedSession.label }}</span>
+          <span class="ov-chip mono">{{ cameraId }}</span>
+        </div>
+        <div class="ov-banner"><RecIndicator variant="banner" :camera-id="cameraId" /></div>
+        <div v-if="closeQueue.length" class="ov-alert" role="alert">
+          <div class="grow">
+            <strong>Finish berdekatan — {{ closeQueue[0]!.boats }} perahu<template v-if="closeQueue[0]!.gapMs !== null">, selisih {{ fmtGap(closeQueue[0]!.gapMs) }}</template></strong>
+            <span>{{ closeQueue[0]!.sessionLabel }}<template v-if="closeQueue.length > 1"> · +{{ closeQueue.length - 1 }} antre</template></span>
+          </div>
+          <button class="btn btn-primary btn-sm" @click="review(closeQueue[0]!)"><AppIcon name="search" /> Tinjau</button>
+        </div>
+        <aside v-show="showInfo" class="ov-side">
+          <TriggerLog :camera-id="cameraId" :limit="4" overlay />
+          <FinishFeed overlay :limit="4" @review="review" />
+        </aside>
+        <div class="ov-controls">
+          <button class="ov-btn" @click="exitFs"><AppIcon name="fullscreenExit" /> Keluar <kbd>F</kbd></button>
+          <button class="ov-btn" @click="showInfo = !showInfo"><AppIcon :name="showInfo ? 'visibilityOff' : 'visibility'" /> {{ showInfo ? "Sembunyikan info" : "Tampilkan info" }}</button>
+          <span class="grow" />
+          <button class="ov-btn" :class="{ on: show.finish }" @click="show.finish = !show.finish">Garis finish</button>
+          <button class="ov-btn" :class="{ on: show.guide }" @click="show.guide = !show.guide">Garis imajiner</button>
+          <button class="ov-btn" :class="{ on: show.grid }" @click="show.grid = !show.grid">Grid</button>
+        </div>
+      </template>
       <p class="hint" style="margin: 10px 0 0"><AppIcon name="touch" /> Klik gambar untuk memindahkan garis imajiner. Untuk mengukur kelurusan, pakai <strong>Ukur tiang</strong> di panel kanan.</p>
     </section>
 
@@ -297,6 +390,35 @@ onUnmounted(() => {
 .pole { stroke: #e879f9; stroke-width: 3; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 2px #000); }
 .pole-pt { fill: #e879f9; stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .measure-tip { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); line-height: 1.2; background: #a21caf; color: #fff; font-weight: 700; font-size: 0.82rem; padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
+/* ---------------- layar penuh (seperti siaran langsung) ---------------- */
+.race-window.fs { position: fixed; inset: 0; z-index: 3000; border: 0; border-radius: 0; padding: 0; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.race-window.fs:hover { box-shadow: none; }
+.fs > .race-toolbar, .fs > .hint { display: none; }
+.fs .stage { width: min(100vw, calc(100vh * var(--ar, 1.7778))); border-radius: 0; }
+.fs .empty { width: 100%; }
+.fs.idle, .fs.idle .stage { cursor: none; }
+.ov-top { position: absolute; top: 16px; left: 16px; right: 376px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
+.ov-chip { background: rgba(15, 23, 42, 0.72); backdrop-filter: blur(6px); color: #fff; padding: 6px 10px; border-radius: 8px; font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.ov-clock { font-size: 1.35rem; padding: 3px 12px; letter-spacing: 0.02em; }
+.ov-banner { position: absolute; top: 62px; left: 16px; right: 376px; }
+.ov-alert { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; background: rgba(245, 158, 11, 0.92); color: #451a03; max-width: min(560px, calc(100% - 32px)); animation: flash 1.4s ease-in-out 3; }
+.ov-alert .grow { display: flex; flex-direction: column; min-width: 0; }
+.ov-alert strong { color: #1c1917; }
+.ov-side { position: absolute; top: 16px; right: 16px; bottom: 84px; width: 340px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.ov-controls { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 28px 16px 14px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.75)); transition: opacity 0.3s; }
+.ov-controls .grow { flex: 1; }
+.fs.idle .ov-controls { opacity: 0; pointer-events: none; }
+.ov-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; color: #fff; font-weight: 600; font-size: 0.88rem; background: rgba(255, 255, 255, 0.12); }
+.ov-btn:hover { background: rgba(255, 255, 255, 0.24); }
+.ov-btn.on { background: var(--brand-2); }
+.ov-btn kbd { font: 700 0.7rem var(--mono); padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.5); }
+/* Layar tegak (tablet/HP): gambar di tengah, info di ruang hitam di bawahnya — tidak menutupi gambar. */
+@media (orientation: portrait) {
+  .ov-top, .ov-banner { right: 16px; }
+  .ov-side { top: auto; left: 16px; width: auto; height: calc((100vh - 100vw / var(--ar, 1.7778)) / 2 - 92px); min-height: 160px; flex-direction: row; align-items: flex-start; }
+  .ov-side > * { flex: 1; min-width: 0; }
+  .ov-controls { flex-wrap: wrap; }
+}
 .offset { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 0.84rem; background: var(--ok-bg); color: var(--ok-ink); }
 .offset.bad { background: var(--warn-bg); color: var(--warn-ink); }
 .gauge { display: flex; align-items: center; gap: 16px; }
