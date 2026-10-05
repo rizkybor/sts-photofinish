@@ -42,7 +42,7 @@ const ROLE_LABEL = { admin: "Admin", judge: "Juri", operator: "Operator", viewer
           <AppIcon :name="realtime.connected ? 'wifi' : 'wifiOff'" />
         </span>
         <ClockPanel />
-        <div class="user">
+        <div class="user" :title="`${auth.user.name} · ${ROLE_LABEL[auth.user.role]}`">
           <span class="avatar"><AppIcon name="person" /></span>
           <span class="user-text"><strong>{{ auth.user.name }}</strong><small>{{ ROLE_LABEL[auth.user.role] }}</small></span>
         </div>
@@ -73,7 +73,8 @@ const ROLE_LABEL = { admin: "Admin", judge: "Juri", operator: "Operator", viewer
 .user-text { display: flex; flex-direction: column; line-height: 1.15; }
 .user-text strong { font-size: 0.88rem; }
 .user-text small { font-size: 0.72rem; opacity: 0.8; }
-@media (max-width: 1400px) { .brand-text small { display: none; } .nav-link { padding: 8px 10px; } }
+/* Nama pengguna & tulisan "Keluar" disembunyikan lebih dulu — font Windows (Arial) lebih lebar dari Avenir. */
+@media (max-width: 1400px) { .brand-text small, .user-text, .hide-sm { display: none; } .nav-link { padding: 8px 10px; } .user { padding-left: 10px; } }
 @media (max-width: 1240px) { .lbl { display: none; } .nav-link { font-size: 1.05rem; } }
 @media (max-width: 980px) { .user-text, .brand-text small, .hide-sm { display: none; } .nav-inner { gap: 10px; } }
 @media (max-width: 720px) {

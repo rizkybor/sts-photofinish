@@ -158,6 +158,7 @@ onUnmounted(() => {
 .clock-face { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.22); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); color: #fff; }
 .clock-face:hover { background: rgba(0, 0, 0, 0.3); }
 .clock-face.warn { box-shadow: inset 0 0 0 1px #fbbf24; }
+.time, .src { white-space: nowrap; }
 .time { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.02em; color: #e0f2fe; }
 .src { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.16); }
 .clock-face.warn .src { background: #fbbf24; color: #78350f; }
