@@ -39,6 +39,23 @@ def open_capture(source: str | int) -> cv2.VideoCapture:
     return cv2.VideoCapture(src)
 
 
+def no_frames_hint() -> str:
+    """Penyebab umum kamera terbuka tanpa gambar, sesuai sistem operasi komputer agent."""
+    if sys.platform == "win32":
+        return (
+            "Periksa: (1) kamera USB masih tersambung; "
+            "(2) tidak ada aplikasi lain yang memakai kamera ini (aplikasi Camera, Zoom, Teams, tab browser) — di Windows satu kamera hanya untuk satu aplikasi; "
+            "(3) Settings → Privacy & security → Camera → 'Let desktop apps access your camera' AKTIF; "
+            "(4) nomor kamera benar — Pindai kamera lalu pilih dari gambarnya, atau turunkan resolusi."
+        )
+    return (
+        "Periksa: (1) kamera masih tersambung (iPhone: dekat Mac, terkunci, Wi-Fi & Bluetooth nyala); "
+        "(2) tidak ada agent lain/aplikasi lain (FaceTime/Zoom/Meet) yang memakai kamera ini; "
+        "(3) izin kamera untuk aplikasi Terminal di System Settings → Privacy & Security → Camera; "
+        "(4) nomor kamera benar — Pindai kamera lalu pilih dari gambarnya."
+    )
+
+
 class CameraError(RuntimeError):
     """Kamera tidak bisa dibuka/dibaca — bisa ditangkap (mis. untuk kembali ke pengaturan lama)."""
 
@@ -60,6 +77,10 @@ class CameraSource:
         if not cap.isOpened():
             raise CameraError(f"Kamera tidak bisa dibuka: {self.source}")
         if not self.replay:
+            if sys.platform == "win32" and self.source.isdigit():
+                # Webcam USB di Windows (DirectShow) bawaannya format mentah (YUY2): di 1080p
+                # sering hanya 2–5 fps atau tidak mengirim gambar sama sekali. MJPG = fps penuh.
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             if self._width:
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
             if self._height:
@@ -79,12 +100,7 @@ class CameraSource:
                 if ok and frame is not None:
                     return frame
                 if time.monotonic() > deadline:
-                    raise CameraError(
-                        f"Kamera {self.source} terbuka tetapi tidak mengirim gambar dalam {warmup_s:.0f} dtk. Periksa: "
-                        "(1) kamera masih tersambung (iPhone: dekat Mac, terkunci, Wi-Fi & Bluetooth nyala); "
-                        "(2) tidak ada agent lain/aplikasi lain (FaceTime/Zoom/Meet) yang memakai kamera ini; "
-                        "(3) izin kamera untuk aplikasi terminal di System Settings → Privacy & Security → Camera."
-                    )
+                    raise CameraError(f"Kamera {self.source} terbuka tetapi tidak mengirim gambar dalam {warmup_s:.0f} dtk. {no_frames_hint()}")
                 time.sleep(0.1)
         finally:
             cap.release()
