@@ -46,6 +46,9 @@ class ObjectFilterConfig:
     margin: float = 0.08        # toleransi jarak kotak objek ke garis finish (fraksi lebar frame)
     recheck_s: float = 0.25     # frame pemicu belum jelas → periksa lagi frame sesudah selang ini
     imgsz: int = 640
+    # Periksa potongan persegi di sekitar garis finish dulu (detail lebih tajam untuk
+    # objek kecil/jauh), lalu seluruh gambar bila objek belum ditemukan.
+    crop: bool = True
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,18 @@ class FilterStats:
     recent: list[dict] = field(default_factory=list)
 
 
+def line_window(width: int, height: int, line_x: float) -> tuple[int, int] | None:
+    """Jendela persegi (setinggi gambar) berpusat di garis finish, dijepit di dalam gambar.
+
+    None bila gambar sudah hampir persegi — memotong tidak menambah detail.
+    """
+    size = min(width, height)
+    if size >= width * 0.9:
+        return None
+    x0 = int(round(min(max(line_x - size / 2, 0), width - size)))
+    return x0, x0 + size
+
+
 class ObjectFilter:
     def __init__(
         self,
@@ -223,8 +238,19 @@ class ObjectFilter:
             return False
 
     def _check(self, frame: np.ndarray, line_x: float) -> tuple[Detection | None, list[Detection]]:
-        dets = self.detector.detect(frame, self.cfg.conf, self.cfg.imgsz)  # type: ignore[union-attr]
-        return self.match(dets, line_x, frame.shape[1]), dets
+        width = frame.shape[1]
+        dets: list[Detection] = []
+        window = line_window(width, frame.shape[0], line_x) if self.cfg.crop else None
+        if window is not None:
+            x0, x1 = window
+            crop = self.detector.detect(frame[:, x0:x1], self.cfg.conf, self.cfg.imgsz)  # type: ignore[union-attr]
+            dets = [Detection(d.label, d.conf, d.x1 + x0, d.y1, d.x2 + x0, d.y2) for d in crop]
+            hit = self.match(dets, line_x, width)
+            if hit is not None:
+                return hit, dets
+        # Seluruh gambar: objek besar/dekat kamera yang terpotong di jendela tetap terlihat utuh.
+        full = self.detector.detect(frame, self.cfg.conf, self.cfg.imgsz)  # type: ignore[union-attr]
+        return self.match(full, line_x, width), dets + full
 
     def _run(self) -> None:
         self._ensure_detector()  # gagal → tetap jalan, setiap pemicu diteruskan (fail-open)

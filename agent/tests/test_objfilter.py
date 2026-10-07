@@ -35,7 +35,7 @@ def wait_until(cond, s=2.0):
 
 
 def test_hanya_kelas_terpilih_yang_menyentuh_garis_diteruskan():
-    cfg = ObjectFilterConfig(classes=("boat",), recheck_s=0)
+    cfg = ObjectFilterConfig(classes=("boat",), recheck_s=0, crop=False)
     frame = np.zeros((360, 640, 3), np.uint8)
     script = [
         [Detection("boat", 0.8, 280, 100, 330, 200)],     # menyentuh garis x=320 → lolos
@@ -56,7 +56,7 @@ def test_hanya_kelas_terpilih_yang_menyentuh_garis_diteruskan():
 
 
 def test_frame_kedua_diperiksa_bila_frame_pemicu_belum_jelas():
-    cfg = ObjectFilterConfig(classes=("motorcycle",), recheck_s=0.05)
+    cfg = ObjectFilterConfig(classes=("motorcycle",), recheck_s=0.05, crop=False)
     later = np.ones((360, 640, 3), np.uint8)
     script = [[], [Detection("motorcycle", 0.6, 290, 0, 350, 300)]]
     f, out = run_filter(cfg, script, latest=lambda: (0, later))
@@ -120,3 +120,39 @@ def test_alasan_pemicu_diabaikan_mudah_dibaca():
     assert "tidak menyentuh garis finish" in f.reason([jauh], 50, 100)
     bangku = Detection("bench", 0.6, 40, 0, 60, 10)
     assert f.reason([bangku], 50, 100) == "Bukan jenis objek yang dipilih — terlihat: bench 0.60."
+
+
+def test_jendela_garis_finish_persegi_dan_dijepit():
+    from pf_agent.objfilter import line_window
+    assert line_window(1920, 1080, 960) == (420, 1500)       # tengah
+    assert line_window(1920, 1080, 100) == (0, 1080)          # dekat tepi kiri → dijepit
+    assert line_window(1920, 1080, 1900) == (840, 1920)       # dekat tepi kanan → dijepit
+    assert line_window(1000, 1000, 500) is None               # sudah persegi
+
+
+def test_deteksi_di_jendela_dikembalikan_ke_koordinat_gambar_penuh():
+    class Fake:
+        names = ["boat"]
+        def __init__(self): self.calls = []
+        def detect(self, frame, conf, imgsz):
+            self.calls.append(frame.shape[1])
+            # objek di tengah potongan (x 500–600 dalam potongan selebar 1080)
+            return [Detection("boat", 0.9, 500, 10, 600, 50)] if frame.shape[1] == 1080 else []
+    f = ObjectFilter(ObjectFilterConfig(classes=("boat",), recheck_s=0), lambda: (0, None))
+    f.detector = Fake()
+    hit, dets = f._check(np.zeros((1080, 1920, 3), dtype=np.uint8), 960)
+    assert hit is not None and (hit.x1, hit.x2) == (920, 1020)  # + x0 = 420
+    assert f.detector.calls == [1080]                          # ketemu di jendela → tanpa periksa penuh
+
+
+def test_tanpa_objek_di_jendela_seluruh_gambar_tetap_diperiksa():
+    class Fake:
+        names = ["boat"]
+        def __init__(self): self.calls = []
+        def detect(self, frame, conf, imgsz):
+            self.calls.append(frame.shape[1])
+            return [Detection("boat", 0.8, 700, 0, 1300, 900)] if frame.shape[1] == 1920 else []
+    f = ObjectFilter(ObjectFilterConfig(classes=("boat",), recheck_s=0), lambda: (0, None))
+    f.detector = Fake()
+    hit, _ = f._check(np.zeros((1080, 1920, 3), dtype=np.uint8), 960)
+    assert hit is not None and f.detector.calls == [1080, 1920]
