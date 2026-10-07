@@ -22,10 +22,12 @@ from .settings import CameraSettings
 
 log = logging.getLogger(__name__)
 
-PREVIEW_INTERVAL_S = 0.25  # ±4 fps — cukup untuk mengatur posisi kamera
+# Cuplikan Live: sampai 10 fps, tetapi frame DILEWATI selama kiriman sebelumnya
+# belum keluar dari antrean — semulus yang bisa ditampung jaringan, dan pemicu
+# serta sinkron jam (antrean yang sama) tidak pernah tertahan gambar.
+PREVIEW_INTERVAL_S = 0.1
 # API jauh (Render/VPS): cuplikan lebih kecil & jarang agar unggahan internet lokasi
 # tidak penuh — rekaman finish dan sinkron jam lebih penting dari gambar standby.
-REMOTE_PREVIEW_INTERVAL_S = 0.5
 REMOTE_PREVIEW_WIDTH = 640
 
 SYNC_INTERVAL_S = 2.0
@@ -201,14 +203,24 @@ class AgentClient:
             self._preview_on.clear()
             log.info("Cuplikan standby kamera dihentikan")
 
+    def _send_backlog(self) -> int:
+        """Jumlah paket yang masih antre dikirim ke API (0 = jaringan sedang lancar)."""
+        q = getattr(self.sio.eio, "queue", None)
+        try:
+            return q.qsize() if q is not None else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
     def _preview_loop(self) -> None:
+        last_ts = 0
         while not self._stop.is_set():
             if not self._preview_on.wait(timeout=1.0) or self.pipeline is None or not self.sio.connected:
                 continue
             ts, frame = self.pipeline.latest.get()
-            if frame is not None:
+            line = self.pipeline.finish_line or self.cfg.finish_line
+            if frame is not None and line is not None and ts != last_ts and self._send_backlog() == 0:
+                last_ts = ts
                 try:
-                    line = self.pipeline.finish_line or self.cfg.finish_line
                     self.sio.emit("agent:preview-frame", {
                         "cameraId": self.cfg.camera_id,
                         "agentNs": str(ts),
@@ -220,7 +232,7 @@ class AgentClient:
                     })
                 except Exception as err:  # noqa: BLE001 — cuplikan tidak boleh mengganggu perekaman
                     log.debug("cuplikan gagal: %s", err)
-            self._stop.wait(REMOTE_PREVIEW_INTERVAL_S if self.cfg.upload_captures else PREVIEW_INTERVAL_S)
+            self._stop.wait(PREVIEW_INTERVAL_S)
 
     # ------------------------------------------------------------ ekstraksi
 
