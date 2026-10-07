@@ -34,6 +34,9 @@ from .clock import now_ns
 log = logging.getLogger(__name__)
 
 MODELS_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
+#: Gambar keputusan filter terakhir (untuk mencari tahu kenapa pemicu diteruskan/diabaikan).
+DECISION_DIR = Path(__file__).resolve().parents[2] / "data" / "filter-log"
+DECISION_KEEP = 30
 BUILTIN_MODELS = ("yolo11n.pt", "yolo11s.pt")  # diunduh otomatis ke data/models/ saat pertama dipakai
 MODEL_SUFFIXES = (".pt", ".onnx")
 
@@ -150,6 +153,36 @@ class FilterStats:
     recent: list[dict] = field(default_factory=list)
 
 
+def save_decision(checked: list[tuple[np.ndarray, list[Detection]]], line_x: float, ok: bool,
+                  wanted: set[str], ts_ns: int, out_dir: Path | None = None) -> Path:
+    """Simpan gambar yang diperiksa filter (frame pemicu [+ frame periksa ulang]) beserta
+    kotak objek & garis finish. Hanya DECISION_KEEP gambar terakhir yang disimpan."""
+    import cv2  # noqa: PLC0415
+
+    out_dir = out_dir or DECISION_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tiles = []
+    for frame, dets in checked:
+        scale = 640 / frame.shape[1]
+        img = cv2.resize(frame, (640, round(frame.shape[0] * scale)), interpolation=cv2.INTER_AREA)
+        x = int(line_x * scale)
+        cv2.line(img, (x, 0), (x, img.shape[0]), (0, 0, 255), 2)
+        for d in dets:
+            color = (0, 200, 0) if d.label.lower() in wanted else (160, 160, 160)
+            p1, p2 = (int(d.x1 * scale), int(d.y1 * scale)), (int(d.x2 * scale), int(d.y2 * scale))
+            cv2.rectangle(img, p1, p2, color, 2)
+            cv2.putText(img, f"{d.label} {d.conf:.2f}", (p1[0] + 2, max(14, p1[1] - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        tiles.append(img)
+    h = max(t.shape[0] for t in tiles)
+    sheet = np.hstack([np.pad(t, ((0, h - t.shape[0]), (0, 0), (0, 0))) for t in tiles])
+    name = time.strftime("%Y%m%d-%H%M%S", time.localtime(ts_ns / 1e9)) + f"-{ts_ns % 1_000_000_000 // 1_000_000:03d}-{'diteruskan' if ok else 'diabaikan'}.jpg"
+    path = out_dir / name
+    cv2.imwrite(str(path), sheet, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    for old in sorted(out_dir.glob("*.jpg"))[:-DECISION_KEEP]:
+        old.unlink(missing_ok=True)
+    return path
+
+
 def line_window(width: int, height: int, line_x: float) -> tuple[int, int] | None:
     """Jendela persegi (setinggi gambar) berpusat di garis finish, dijepit di dalam gambar.
 
@@ -264,6 +297,7 @@ class ObjectFilter:
             t0 = time.perf_counter()
             try:
                 hit, dets = self._check(job.frame, job.line_x)
+                checked = [(job.frame, dets)]
                 if hit is None and self.cfg.recheck_s > 0:
                     # Haluan baru menyentuh garis — objek belum utuh di frame pemicu.
                     wait = job.ts / 1e9 + self.cfg.recheck_s - now_ns() / 1e9
@@ -273,6 +307,7 @@ class ObjectFilter:
                     if later is not None:
                         hit, more = self._check(later, job.line_x)
                         dets = dets + more
+                        checked.append((later, more))
             except Exception as err:  # noqa: BLE001
                 log.error("Filter objek gagal memeriksa (%s) — pemicu diteruskan", err)
                 job.forward(job.ts)
@@ -291,6 +326,10 @@ class ObjectFilter:
             reason = None if hit else self.reason(dets, job.line_x, job.frame.shape[1])
             entry = {"at": job.ts, "ok": hit is not None, "seen": self.stats.last_label if hit else seen, "reason": reason}
             self.stats.recent = ([entry] + self.stats.recent)[:20]
+            try:
+                save_decision(checked, job.line_x, hit is not None, {c.lower() for c in self.cfg.classes}, job.ts)
+            except Exception as err:  # noqa: BLE001 — catatan gambar tidak boleh mengganggu filter
+                log.debug("gambar keputusan gagal disimpan: %s", err)
 
     def status(self) -> dict:
         s = self.stats

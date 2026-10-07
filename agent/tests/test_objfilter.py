@@ -156,3 +156,15 @@ def test_tanpa_objek_di_jendela_seluruh_gambar_tetap_diperiksa():
     f.detector = Fake()
     hit, _ = f._check(np.zeros((1080, 1920, 3), dtype=np.uint8), 960)
     assert hit is not None and f.detector.calls == [1080, 1920]
+
+
+def test_gambar_keputusan_disimpan_dan_dibatasi(tmp_path, monkeypatch):
+    from pf_agent import objfilter as of
+    monkeypatch.setattr(of, "DECISION_KEEP", 3)
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    dets = [Detection("motorcycle", 0.8, 600, 100, 700, 400), Detection("person", 0.9, 10, 10, 50, 50)]
+    for i in range(5):
+        p = of.save_decision([(frame, dets), (frame, [])], 640, i % 2 == 0, {"motorcycle"}, 1_791_000_000_000_000_000 + i * 10**9, tmp_path)
+    files = sorted(tmp_path.glob("*.jpg"))
+    assert len(files) == 3 and files[-1] == p
+    assert p.name.endswith("-diteruskan.jpg")
