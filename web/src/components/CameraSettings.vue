@@ -76,7 +76,13 @@ const OBJECT_PRESETS: Array<{ cls: string; label: string }> = [
   { cls: "boat", label: "Perahu" }, { cls: "motorcycle", label: "Motor" }, { cls: "person", label: "Orang" },
 ];
 const PRESET_CLASSES = new Set(OBJECT_PRESETS.map((o) => o.cls));
-const BUILTIN_MODEL_LABEL: Record<string, string> = { "yolo11n.pt": "bawaan · cepat", "yolo11s.pt": "bawaan · lebih akurat" };
+const BUILTIN_MODEL_LABEL: Record<string, string> = { "yolo11s.pt": "Akurat", "yolo11n.pt": "Cepat" };
+/** Pilihan model: bawaan dulu (Akurat, Cepat), lalu model hasil latih ulang di data/models/. */
+const modelOptions = computed(() => {
+  const all = detector.value?.models ?? Object.keys(BUILTIN_MODEL_LABEL);
+  const builtin = Object.keys(BUILTIN_MODEL_LABEL).filter((m) => all.includes(m));
+  return [...builtin, ...all.filter((m) => !BUILTIN_MODEL_LABEL[m])];
+});
 const of = computed(() => form.objectFilter!);
 const filterStatus = computed(() => status.value?.objectFilter ?? null);
 const detector = computed(() => status.value?.detector ?? null);
@@ -537,11 +543,14 @@ const shownLine = computed<Line | null>(() => {
             >{{ o.label }}</button>
           </div>
           <div class="grid-2" style="margin-top: 12px">
-            <label class="field"><span class="field-label">Model</span>
-              <select v-model="of.model" class="input">
-                <option v-for="m in detector?.models ?? ['yolo11n.pt', 'yolo11s.pt']" :key="m" :value="m">{{ m }}{{ BUILTIN_MODEL_LABEL[m] ? ` (${BUILTIN_MODEL_LABEL[m]})` : " (latih ulang)" }}</option>
-              </select>
-            </label>
+            <div class="field"><span class="field-label">Model</span>
+              <div class="chips" role="radiogroup" aria-label="Model">
+                <button
+                  v-for="m in modelOptions" :key="m" type="button" class="chip-toggle" :class="{ on: of.model === m }"
+                  role="radio" :aria-checked="of.model === m" @click="of.model = m"
+                >{{ BUILTIN_MODEL_LABEL[m] ?? "Latih ulang" }}<small>{{ m }}</small></button>
+              </div>
+            </div>
             <label class="field"><span class="field-label">Keyakinan minimal: {{ Math.round(of.conf * 100) }}%</span>
               <input v-model.number="of.conf" type="range" min="0.15" max="0.8" step="0.05" />
             </label>
