@@ -77,7 +77,7 @@ class CameraSettings:
                        "width": self.frames.width if self.frames else 1280},
             "objectFilter": {"enabled": self.object_filter is not None,
                              "classes": list(self.object_filter.classes) if self.object_filter else ["boat"],
-                             "model": self.object_filter.model if self.object_filter else "yolo11n.pt",
+                             "model": self.object_filter.model if self.object_filter else "yolo11s.pt",
                              "conf": self.object_filter.conf if self.object_filter else 0.35},
         }
 
@@ -92,7 +92,7 @@ def _object_filter(o: dict) -> ObjectFilterConfig | None:
     classes = tuple(dict.fromkeys(str(c).strip() for c in (o.get("classes") or []) if str(c).strip()))
     if not classes or len(classes) > 10 or not all(CLASS_RE.match(c) for c in classes):
         raise ValueError("Pilih 1–10 jenis objek (huruf/angka, mis. boat, motorcycle)")
-    model = str(o.get("model") or "yolo11n.pt")
+    model = str(o.get("model") or "yolo11s.pt")
     resolve_model(model)  # ValueError bila di luar data/models/
     conf = float(o.get("conf", 0.35))
     if not 0.05 <= conf <= 0.95:

@@ -24,6 +24,15 @@ if [ ! -x agent/.venv/bin/pf-agent ]; then
 fi
 echo "Agent terpasang."
 
+read -r -p "Pasang juga filter objek (YOLO)? Unduhan ±1 GB, butuh internet [y/N] " ans
+if [[ "$ans" =~ ^[YyJj] ]]; then
+  echo "Memasang filter objek (beberapa menit)…"
+  agent/.venv/bin/pip install -q -e "agent[detect]"
+  echo "Mengunduh model yolo11s.pt…"
+  agent/.venv/bin/python -c "from pf_agent.objfilter import YoloDetector; YoloDetector.load('yolo11s.pt')"
+  echo "Filter objek terpasang."
+fi
+
 if [ ! -f .env.render ]; then cp .env.render.example .env.render; fi
 echo
 echo "Langkah berikutnya:"

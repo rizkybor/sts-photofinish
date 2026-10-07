@@ -18,6 +18,15 @@ if not exist "agent\.venv\Scripts\pf-agent.exe" (
   agent\.venv\Scripts\python -m pip install -q -e agent || goto :gagal
 )
 echo Agent terpasang.
+echo.
+choice /c YN /m "Pasang juga filter objek (YOLO)? Unduhan +-1 GB, butuh internet"
+if errorlevel 2 goto :lewat_filter
+echo Memasang filter objek (beberapa menit)...
+agent\.venv\Scripts\python -m pip install -q -e "agent[detect]" || goto :gagal
+echo Mengunduh model yolo11s.pt...
+agent\.venv\Scripts\python -c "from pf_agent.objfilter import YoloDetector; YoloDetector.load('yolo11s.pt')" || goto :gagal
+echo Filter objek terpasang.
+:lewat_filter
 if not exist ".env.render" copy ".env.render.example" ".env.render" >nul
 echo.
 echo Langkah berikutnya: isi PF_DEVICE_TOKEN di .env.render (Notepad terbuka), simpan,

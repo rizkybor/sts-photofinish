@@ -63,7 +63,7 @@ class AgentConfig:
             # PF_OBJECT_FILTER=boat,motorcycle → hanya pemicu dari objek kelas ini yang diteruskan
             object_filter=ObjectFilterConfig(
                 classes=tuple(c.strip() for c in e["PF_OBJECT_FILTER"].split(",") if c.strip()),
-                model=e.get("PF_OBJECT_MODEL", "yolo11n.pt"),
+                model=e.get("PF_OBJECT_MODEL", "yolo11s.pt"),
                 conf=float(e.get("PF_OBJECT_CONF", "0.35")),
             ) if e.get("PF_OBJECT_FILTER", "").strip() not in ("", "off") else None,
         )

@@ -67,7 +67,7 @@ const scanResult = ref<ScanResult | null>(null);
 const form = reactive<Config>({
   sourceType: "laptop", source: "0", fps: 30, width: null, height: null, finishLine: null,
   trigger: { enabled: true, threshold: 30, minRun: 0.06 }, frames: { enabled: true, fps: 30, width: 1280 },
-  objectFilter: { enabled: false, classes: ["boat"], model: "yolo11n.pt", conf: 0.35 },
+  objectFilter: { enabled: false, classes: ["boat"], model: "yolo11s.pt", conf: 0.35 },
 });
 
 // ---------------------------------------------------------------- filter objek
@@ -176,7 +176,7 @@ const lineTilt = computed(() => (form.finishLine ? tiltFromVerticalDeg(form.fini
 function loadForm(c: CameraRow | null) {
   const cfg = c?.saved?.config ?? c?.status?.settings;
   if (!cfg) return;
-  Object.assign(form, { objectFilter: { enabled: false, classes: ["boat"], model: "yolo11n.pt", conf: 0.35 } }, JSON.parse(JSON.stringify(cfg)));
+  Object.assign(form, { objectFilter: { enabled: false, classes: ["boat"], model: "yolo11s.pt", conf: 0.35 } }, JSON.parse(JSON.stringify(cfg)));
   // Kelas lama di luar pilihan (mis. sepeda, mobil) dibuang — yang tampil = yang diterapkan.
   form.objectFilter!.classes = form.objectFilter!.classes.filter((c) => PRESET_CLASSES.has(c));
   lineMode.value = form.finishLine ? "manual" : "auto";

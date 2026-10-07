@@ -41,7 +41,7 @@ MODEL_SUFFIXES = (".pt", ".onnx")
 @dataclass(frozen=True)
 class ObjectFilterConfig:
     classes: tuple[str, ...] = ("boat",)
-    model: str = "yolo11n.pt"
+    model: str = "yolo11s.pt"  # lebih akurat dari yolo11n, tetap cepat di laptop modern
     conf: float = 0.35          # keyakinan minimal deteksi
     margin: float = 0.08        # toleransi jarak kotak objek ke garis finish (fraksi lebar frame)
     recheck_s: float = 0.25     # frame pemicu belum jelas → periksa lagi frame sesudah selang ini
