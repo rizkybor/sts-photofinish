@@ -13,9 +13,25 @@ const props = defineProps<{ cameraId: string; limit?: number; overlay?: boolean 
 const LABEL_ID: Record<string, string> = {
   boat: "perahu", person: "orang", motorcycle: "motor", bicycle: "sepeda", car: "mobil", bird: "burung",
   bench: "bangku", umbrella: "payung", "surfboard": "papan selancar", kite: "layang-layang", dog: "anjing",
+  bottle: "botol", "potted plant": "pot tanaman", chair: "kursi", truck: "truk", backpack: "ransel", handbag: "tas",
 };
-const translate = (text: string) => text.replace(/\b([a-z][a-z ]*?) (\d\.\d\d)\b/g, (_m, label: string, conf: string) =>
-  `${LABEL_ID[label] ?? label} (${Math.round(Number(conf) * 100)}%)`);
+const ITEM = /\b([a-z][a-z ]*?) (\d\.\d\d)\b/g;
+/**
+ * "bottle 0.72, bottle 0.86, person 0.57" → "botol ×2 (72–86%), orang (57%)" — ringkas per jenis,
+ * yang paling yakin dulu, supaya daftar panjang tetap terbaca.
+ */
+function translate(text: string) {
+  return text.replace(/(?:\b[a-z][a-z ]*? \d\.\d\d\b(?:, )?)+/g, (list) => {
+    const groups = new Map<string, number[]>();
+    for (const [, label, conf] of list.matchAll(ITEM)) groups.set(label!, [...(groups.get(label!) ?? []), Math.round(Number(conf) * 100)]);
+    const parts = [...groups].sort((a, b) => Math.max(...b[1]) - Math.max(...a[1])).map(([label, confs]) => {
+      const name = LABEL_ID[label] ?? label;
+      const lo = Math.min(...confs), hi = Math.max(...confs);
+      return confs.length > 1 ? `${name} ×${confs.length} (${lo === hi ? `${hi}%` : `${lo}–${hi}%`})` : `${name} (${hi}%)`;
+    });
+    return parts.join(", ") + (list.endsWith(", ") ? ", " : "");
+  });
+}
 
 const filter = computed(() => cameraStatus(props.cameraId)?.objectFilter ?? null);
 const items = computed(() => (filter.value?.recent ?? []).slice(0, props.limit ?? 8));
